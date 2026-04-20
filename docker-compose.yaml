@@ -1,32 +1,30 @@
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: notification-postgres
     environment:
       POSTGRES_USER: notification_user
       POSTGRES_PASSWORD: notification_password
-      POSTGRES_DB: notification_db
+      POSTGRES_DB: booking
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - notification-network
+      - spbpu-booking-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      test: ["CMD-SHELL", "pg_isready -U notification_user -d booking"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: notification-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - notification-network
+      - spbpu-booking-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -35,18 +33,16 @@ services:
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
-    container_name: notification-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
     networks:
-      - notification-network
+      - spbpu-booking-network
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    container_name: notification-kafka
     depends_on:
       - zookeeper
     ports:
@@ -59,16 +55,15 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
     networks:
-      - notification-network
+      - spbpu-booking-network
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
-    container_name: notification-kafka-ui
     depends_on:
       - kafka
     ports:
@@ -78,29 +73,27 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
     networks:
-      - notification-network
+      - spbpu-booking-network
 
-  message-generator:
+  generator:
     build:
       context: ./services/message-generator
       dockerfile: Dockerfile
-    container_name: notification-message-generator
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     networks:
-      - notification-network
+      - spbpu-booking-network
     profiles:
       - generator
     restart: "no"
 
-  parser-service:
+  parser:
     build:
-      context: ./services/parser-service
+      context: ./services/parser
       dockerfile: Dockerfile
-    container_name: notification-parser-service
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,20 +102,19 @@ services:
     ports:
       - "8082:8082"
     environment:
-      SERVICE_NAME: parser-service
+      SERVICE_NAME: parser
       SERVICE_PORT: 8082
-      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
+      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/booking
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_URL: redis://redis:6379
     networks:
-      - notification-network
+      - spbpu-booking-network
     restart: unless-stopped
 
   backend:
     build:
       context: ./services/backend
       dockerfile: Dockerfile
-    container_name: notification-backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,18 +125,17 @@ services:
     environment:
       SERVICE_NAME: backend
       SERVICE_PORT: 8083
-      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
+      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/booking
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_URL: redis://redis:6379
     networks:
-      - notification-network
+      - spbpu-booking-network
     restart: unless-stopped
 
   notification-service:
     build:
-      context: ./services/notification-service
+      context: ./services/notification
       dockerfile: Dockerfile
-    container_name: notification-service
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,27 +146,21 @@ services:
     ports:
       - "8084:8084"
     environment:
-      SERVICE_NAME: notification-service
+      SERVICE_NAME: notification
       SERVICE_PORT: 8084
       DEBUG: "false"
-      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
+      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/booking
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_GROUP_ID: notification-service-group
+      KAFKA_GROUP_ID: notification-group
       KAFKA_TOPICS: "booking.created,booking.updated,booking.cancelled,schedule.synced,schedule.conflict"
       REDIS_URL: redis://redis:6379
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TELEGRAM_ENABLED: "true"
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
-      EMAIL_ENABLED: "false"
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
       MESSAGE_PROCESSING_TIMEOUT: 30
       MAX_RETRIES: 3
     networks:
-      - notification-network
+      - spbpu-booking-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8084/health"]
@@ -183,11 +168,10 @@ services:
       timeout: 10s
       retries: 3
 
-  telegram-frontend:
+  telegram:
     build:
       context: ./services/telegram-frontend
       dockerfile: Dockerfile
-    container_name: notification-telegram-frontend
     depends_on:
       backend:
         condition: service_started
@@ -201,11 +185,11 @@ services:
       BACKEND_URL: http://backend:8083
       NOTIFICATION_SERVICE_URL: http://notification-service:8084
     networks:
-      - notification-network
+      - spbpu-booking-network
     restart: unless-stopped
 
 networks:
-  notification-network:
+  spbpu-booking-network:
     driver: bridge
 
 volumes:

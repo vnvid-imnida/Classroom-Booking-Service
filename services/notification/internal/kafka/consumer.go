@@ -157,12 +157,11 @@ func (kcm *ConsumerManager) processEvent(ctx context.Context, kafkaMsg models.Ka
 			username = getOptionalStringField(data, "telegram_username")
 		}
 
-		userID, err := database.UpsertUserByTelegramID(ctx, telegramID, username)
-		if err != nil {
+		if err := database.UpsertUserByTelegramID(ctx, telegramID, username); err != nil {
 			return fmt.Errorf("ошибка upsert пользователя: %w", err)
 		}
 
-		log.Printf("Пользователь обработан: id=%d, event=%s", userID, eventType)
+		log.Printf("Пользователь обработан: telegram_id=%d, event=%s", telegramID, eventType)
 		return nil
 	}
 
@@ -183,8 +182,8 @@ func (kcm *ConsumerManager) processEvent(ctx context.Context, kafkaMsg models.Ka
 			username = getOptionalStringField(data, "telegram_username")
 		}
 
-		localUserID, err := database.UpsertUserByTelegramID(ctx, fmt.Sprintf("%d", userID), username)
-		if err != nil {
+		localUserID := int64(userID)
+		if err := database.UpsertUserByTelegramID(ctx, localUserID, username); err != nil {
 			return fmt.Errorf("ошибка upsert пользователя из booking события: %w", err)
 		}
 
@@ -198,8 +197,8 @@ func (kcm *ConsumerManager) processEvent(ctx context.Context, kafkaMsg models.Ka
 			if username == nil {
 				username = getOptionalStringField(data, "telegram_username")
 			}
-			if _, err := database.UpsertUserByTelegramID(ctx, telegramID, username); err != nil {
-				log.Printf("Не удалось upsert пользователя по telegram_id=%s: %v", telegramID, err)
+			if err := database.UpsertUserByTelegramID(ctx, telegramID, username); err != nil {
+				log.Printf("Не удалось upsert пользователя по telegram_id=%d: %v", telegramID, err)
 			}
 		}
 		message = notification.FormatRoomMessage(eventType, data)
@@ -283,30 +282,37 @@ func getIntField(data map[string]interface{}, key string) (int, bool) {
 	}
 }
 
-func getTelegramID(data map[string]interface{}) (string, bool) {
+func getTelegramID(data map[string]interface{}) (int64, bool) {
 	if value, ok := data["telegram_id"]; ok {
 		switch v := value.(type) {
 		case string:
 			if strings.TrimSpace(v) != "" {
-				return v, true
+				var parsed int64
+				if _, err := fmt.Sscanf(v, "%d", &parsed); err == nil {
+					return parsed, true
+				}
 			}
 		case float64:
-			return fmt.Sprintf("%.0f", v), true
+			return int64(v), true
 		case int:
-			return fmt.Sprintf("%d", v), true
+			return int64(v), true
+		case int64:
+			return v, true
 		}
 	}
 
 	if value, ok := data["user_id"]; ok {
 		switch v := value.(type) {
 		case float64:
-			return fmt.Sprintf("%.0f", v), true
+			return int64(v), true
 		case int:
-			return fmt.Sprintf("%d", v), true
+			return int64(v), true
+		case int64:
+			return v, true
 		}
 	}
 
-	return "", false
+	return 0, false
 }
 
 func getOptionalStringField(data map[string]interface{}, key string) *string {

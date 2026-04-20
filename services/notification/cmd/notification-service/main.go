@@ -136,7 +136,6 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"notifications": map[string]interface{}{
 			"telegram": cfg.TelegramEnabled,
-			"email":    cfg.EmailEnabled,
 		},
 		"timestamp": time.Now().Unix(),
 	}

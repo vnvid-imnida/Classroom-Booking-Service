@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "parser-service")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "parser")
 SERVICE_PORT = int(os.getenv("SERVICE_PORT", 8082))
 
 

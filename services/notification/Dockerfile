@@ -16,7 +16,7 @@ RUN go mod download
 COPY . .
 
 # Компиляция
-RUN CGO_ENABLED=0 GOOS=linux go build -o notification-service .
+RUN CGO_ENABLED=0 GOOS=linux go build -o notification-service ./cmd/notification-service
 
 # Stage 2: Runtime
 FROM alpine:latest

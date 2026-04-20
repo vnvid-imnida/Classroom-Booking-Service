@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
-	"net/smtp"
 	"net/url"
 
 	"notification-service/internal/database"
@@ -24,7 +22,7 @@ func NewManager(cfg models.Config) *Manager {
 }
 
 // SendNotification отправляет уведомление через все доступные каналы
-func (nm *Manager) SendNotification(ctx context.Context, userID int, message, notificationType, eventID string, bookingID *int) error {
+func (nm *Manager) SendNotification(ctx context.Context, userID int64, message, notificationType, eventID string, bookingID *int) error {
 	// Сохранение в БД
 	notificationID, err := database.SaveNotification(ctx, userID, bookingID, message, notificationType, eventID)
 	if err != nil {
@@ -40,17 +38,6 @@ func (nm *Manager) SendNotification(ctx context.Context, userID int, message, no
 			_ = database.UpdateNotificationStatus(ctx, notificationID, "failed", &failReason)
 		} else {
 			log.Printf("✅ Сообщение отправлено в Telegram пользователю %d", userID)
-		}
-	}
-
-	// Отправка через Email
-	if nm.cfg.EmailEnabled && nm.cfg.SMTPHost != "" {
-		if err := nm.sendEmail(ctx, userID, message, notificationType); err != nil {
-			log.Printf("⚠️ Ошибка отправки Email: %v", err)
-			failReason := "email_error: " + err.Error()
-			_ = database.UpdateNotificationStatus(ctx, notificationID, "failed", &failReason)
-		} else {
-			log.Printf("✅ Email отправлен пользователю %d", userID)
 		}
 	}
 
@@ -86,16 +73,14 @@ func (nm *Manager) SendBroadcastNotification(ctx context.Context, message, notif
 }
 
 // sendTelegram отправляет сообщение в Telegram
-func (nm *Manager) sendTelegram(ctx context.Context, userID int, message string) error {
+func (nm *Manager) sendTelegram(ctx context.Context, userID int64, message string) error {
 	if nm.cfg.TelegramBotToken == "" {
 		return fmt.Errorf("Telegram token не установлен")
 	}
 
-	// Получение Telegram ID пользователя
-	telegramID, err := database.GetUserTelegramID(ctx, userID)
-	if err != nil {
-		log.Printf("⚠️ Не найден Telegram ID для пользователя %d", userID)
-		// Используем глобальный chat_id если не найден ID пользователя
+	telegramID := fmt.Sprintf("%d", userID)
+	if userID <= 0 {
+		log.Printf("⚠️ Некорректный Telegram ID пользователя %d", userID)
 		if nm.cfg.TelegramChatID == "" {
 			return fmt.Errorf("Telegram chat ID не найден для пользователя")
 		}
@@ -124,79 +109,6 @@ func (nm *Manager) sendTelegram(ctx context.Context, userID int, message string)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Telegram вернул статус %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-// sendEmail отправляет Email уведомление через SMTP
-func (nm *Manager) sendEmail(ctx context.Context, userID int, message, notificationType string) error {
-	// Получение email пользователя
-	userEmail, err := database.GetUserEmail(ctx, userID)
-	if err != nil {
-		log.Printf("⚠️ Не найден email для пользователя %d", userID)
-		return err
-	}
-
-	if nm.cfg.SMTPHost == "" || nm.cfg.SMTPFromEmail == "" {
-		return fmt.Errorf("SMTP конфигурация не полная")
-	}
-
-	// Формирование SMTP адреса
-	addr := net.JoinHostPort(nm.cfg.SMTPHost, fmt.Sprintf("%d", nm.cfg.SMTPPort))
-
-	// Формирование письма
-	subject := fmt.Sprintf("Уведомление: %s", notificationType)
-	body := fmt.Sprintf("<p>%s</p>", message)
-
-	headers := fmt.Sprintf(
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=\"UTF-8\"\r\n\r\n",
-		nm.cfg.SMTPFromEmail,
-		userEmail,
-		subject,
-	)
-
-	fullMessage := headers + body
-
-	// Подключение к SMTP серверу
-	client, err := smtp.Dial(addr)
-	if err != nil {
-		return fmt.Errorf("ошибка подключения к SMTP: %w", err)
-	}
-	defer client.Close()
-
-	// Аутентификация
-	if nm.cfg.SMTPUser != "" && nm.cfg.SMTPPassword != "" {
-		auth := smtp.PlainAuth("", nm.cfg.SMTPUser, nm.cfg.SMTPPassword, nm.cfg.SMTPHost)
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("ошибка аутентификации SMTP: %w", err)
-		}
-	}
-
-	// Отправка письма
-	if err := client.Mail(nm.cfg.SMTPFromEmail); err != nil {
-		return fmt.Errorf("ошибка установки адреса отправителя: %w", err)
-	}
-
-	if err := client.Rcpt(userEmail); err != nil {
-		return fmt.Errorf("ошибка установки адреса получателя: %w", err)
-	}
-
-	writer, err := client.Data()
-	if err != nil {
-		return fmt.Errorf("ошибка получения writer: %w", err)
-	}
-
-	if _, err := fmt.Fprint(writer, fullMessage); err != nil {
-		return fmt.Errorf("ошибка отправки данных письма: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("ошибка закрытия writer: %w", err)
-	}
-
-	if err := client.Quit(); err != nil {
-		return fmt.Errorf("ошибка отключения от SMTP: %w", err)
 	}
 
 	return nil

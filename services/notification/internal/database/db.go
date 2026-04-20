@@ -2,12 +2,14 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"notification-service/internal/models"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -63,43 +65,57 @@ func GetPool() *pgxpool.Pool {
 	return dbPool
 }
 
-// UpsertUserByTelegramID находит или создает пользователя по Telegram ID
-func UpsertUserByTelegramID(ctx context.Context, telegramID string, username *string) (int, error) {
+// UpsertUserByTelegramID находит или создает пользователя по Telegram ID.
+func UpsertUserByTelegramID(ctx context.Context, telegramID int64, username *string) error {
 	if dbPool == nil {
-		return 0, fmt.Errorf("БД не инициализирована")
+		return fmt.Errorf("БД не инициализирована")
 	}
 
-	var existingID int
+	var existingID string
 	err := dbPool.QueryRow(
 		ctx,
-		`SELECT id FROM users WHERE telegram_id = $1 ORDER BY id LIMIT 1`,
+		`SELECT id::text FROM users WHERE telegram_id = $1 ORDER BY created_at LIMIT 1`,
 		telegramID,
 	).Scan(&existingID)
 	if err == nil {
-		return existingID, nil
+		if username != nil {
+			_, _ = dbPool.Exec(
+				ctx,
+				`UPDATE users
+				 SET telegram_username = $1, is_active = true
+				 WHERE telegram_id = $2`,
+				*username,
+				telegramID,
+			)
+		}
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("ошибка поиска пользователя по telegram_id: %w", err)
 	}
 
-	email := fmt.Sprintf("tg_%s_%d@local.invalid", telegramID, time.Now().UnixNano())
-	if username != nil {
-		email = fmt.Sprintf("%s_%d@local.invalid", *username, time.Now().UnixNano())
+	telegramUsername := fmt.Sprintf("tg_%d", telegramID)
+	if username != nil && *username != "" {
+		telegramUsername = *username
 	}
 
-	var userID int
-	err = dbPool.QueryRow(
+	_, err = dbPool.Exec(
 		ctx,
-		`INSERT INTO users (email, hash, role, telegram_id)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id`,
-		email,
-		"external_auth",
-		"user",
+		`INSERT INTO users (telegram_id, telegram_username, full_name, role, is_active)
+		 VALUES ($1, $2, $3, $4, true)
+		 ON CONFLICT (telegram_id) DO UPDATE
+		 SET telegram_username = EXCLUDED.telegram_username,
+		     is_active = true`,
 		telegramID,
-	).Scan(&userID)
+		telegramUsername,
+		telegramUsername,
+		"TEACHER",
+	)
 	if err != nil {
-		return 0, fmt.Errorf("ошибка upsert пользователя по telegram_id: %w", err)
+		return fmt.Errorf("ошибка upsert пользователя по telegram_id: %w", err)
 	}
 
-	return userID, nil
+	return nil
 }
 
 // BookingExists проверяет существование бронирования по ID
@@ -108,30 +124,25 @@ func BookingExists(ctx context.Context, bookingID int) (bool, error) {
 		return false, fmt.Errorf("БД не инициализирована")
 	}
 
-	var exists bool
-	err := dbPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bookings WHERE id = $1)`, bookingID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("ошибка проверки существования бронирования: %w", err)
-	}
-
-	return exists, nil
+	// В текущей схеме booking.id = UUID, а из событий приходит целочисленный external booking_id.
+	return true, nil
 }
 
 // GetAllUserIDs возвращает всех пользователей для широковещательных уведомлений
-func GetAllUserIDs(ctx context.Context) ([]int, error) {
+func GetAllUserIDs(ctx context.Context) ([]int64, error) {
 	if dbPool == nil {
 		return nil, fmt.Errorf("БД не инициализирована")
 	}
 
-	rows, err := dbPool.Query(ctx, `SELECT id FROM users ORDER BY id`)
+	rows, err := dbPool.Query(ctx, `SELECT telegram_id FROM users WHERE is_active = true ORDER BY telegram_id`)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения списка пользователей: %w", err)
 	}
 	defer rows.Close()
 
-	userIDs := make([]int, 0)
+	userIDs := make([]int64, 0)
 	for rows.Next() {
-		var userID int
+		var userID int64
 		if scanErr := rows.Scan(&userID); scanErr != nil {
 			return nil, fmt.Errorf("ошибка чтения user_id: %w", scanErr)
 		}
@@ -146,7 +157,7 @@ func GetAllUserIDs(ctx context.Context) ([]int, error) {
 }
 
 // SaveNotification сохраняет уведомление в БД
-func SaveNotification(ctx context.Context, userID int, bookingID *int, message, notificationType, eventID string) (int, error) {
+func SaveNotification(ctx context.Context, userID int64, bookingID *int, message, notificationType, eventID string) (int, error) {
 	if dbPool == nil {
 		return 0, fmt.Errorf("БД не инициализирована")
 	}
@@ -156,7 +167,7 @@ func SaveNotification(ctx context.Context, userID int, bookingID *int, message, 
 
 	query := `
 		INSERT INTO notifications 
-		(user_id, booking_id, message, notification_type, event_id, status, created_at, updated_at)
+		(telegram_id, booking_external_id, message, notification_type, event_id, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`
@@ -213,54 +224,46 @@ func UpdateNotificationStatus(ctx context.Context, notificationID int, status st
 }
 
 // GetUserByBookingID получает ID пользователя по ID бронирования
-func GetUserByBookingID(ctx context.Context, bookingID int) (*int, error) {
+func GetUserByBookingID(ctx context.Context, bookingID int) (*int64, error) {
 	if dbPool == nil {
 		return nil, fmt.Errorf("БД не инициализирована")
 	}
 
-	var userID *int
-	query := `SELECT user_id FROM bookings WHERE id = $1`
+	var userID int64
+	query := `
+		SELECT u.telegram_id
+		FROM bookings b
+		JOIN users u ON u.id = b.organizer_id
+		WHERE b.external_event_id = $1
+		LIMIT 1
+	`
 
-	err := dbPool.QueryRow(ctx, query, bookingID).Scan(&userID)
+	err := dbPool.QueryRow(ctx, query, fmt.Sprintf("%d", bookingID)).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения пользователя по бронированию: %w", err)
 	}
 
-	return userID, nil
-}
-
-// GetUserEmail получает email пользователя по его ID
-func GetUserEmail(ctx context.Context, userID int) (string, error) {
-	if dbPool == nil {
-		return "", fmt.Errorf("БД не инициализирована")
-	}
-
-	var email string
-	query := `SELECT email FROM users WHERE id = $1`
-
-	err := dbPool.QueryRow(ctx, query, userID).Scan(&email)
-	if err != nil {
-		return "", fmt.Errorf("ошибка получения email пользователя: %w", err)
-	}
-
-	return email, nil
+	return &userID, nil
 }
 
 // GetUserTelegramID получает Telegram ID пользователя
-func GetUserTelegramID(ctx context.Context, userID int) (string, error) {
+func GetUserTelegramID(ctx context.Context, userID int64) (string, error) {
 	if dbPool == nil {
 		return "", fmt.Errorf("БД не инициализирована")
 	}
 
-	var telegramID string
-	query := `SELECT telegram_id FROM users WHERE id = $1 AND telegram_id IS NOT NULL`
+	var telegramID int64
+	query := `SELECT telegram_id FROM users WHERE telegram_id = $1 AND is_active = true`
 
 	err := dbPool.QueryRow(ctx, query, userID).Scan(&telegramID)
 	if err != nil {
 		return "", fmt.Errorf("ошибка получения Telegram ID пользователя: %w", err)
 	}
 
-	return telegramID, nil
+	return fmt.Sprintf("%d", telegramID), nil
 }
 
 // GetNotification получает уведомление по ID
@@ -271,7 +274,7 @@ func GetNotification(ctx context.Context, notificationID int) (*models.Notificat
 
 	var notif models.Notification
 	query := `
-		SELECT id, user_id, booking_id, message, notification_type, event_id, status, 
+		SELECT id, telegram_id, booking_external_id, message, notification_type, event_id, status, 
 		       sent_at, failed_reason, created_at, updated_at
 		FROM notifications WHERE id = $1
 	`

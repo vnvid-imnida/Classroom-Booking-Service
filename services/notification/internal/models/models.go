@@ -2,44 +2,38 @@ package models
 
 import "time"
 
-// Config структура для конфигурации сервиса
 type Config struct {
 	// Сервис
-	ServiceName string
-	ServicePort int
-	Debug       bool
+	ServiceName string `envconfig:"SERVICE_NAME"`
+	ServicePort int    `envconfig:"SERVICE_PORT"`
+	Debug       bool   `envconfig:"DEBUG"`
 
 	// База данных
-	DatabaseURL string
+	DatabaseURL string `envconfig:"DATABASE_URL"`
 
 	// Kafka
-	KafkaBootstrapServers string
-	KafkaGroupID          string
-	KafkaTopics           string
-	KafkaAutoOffsetReset  string
+	KafkaBootstrapServers string `envconfig:"KAFKA_BOOTSTRAP_SERVERS"`
+	KafkaGroupID          string `envconfig:"KAFKA_GROUP_ID"`
+	KafkaTopics           string `envconfig:"KAFKA_TOPICS"`
+	KafkaAutoOffsetReset  string `envconfig:"KAFKA_AUTO_OFFSET_RESET"`
+
+	// Redis (новое поле)
+	RedisURL string `envconfig:"REDIS_URL"`
 
 	// Telegram
-	TelegramBotToken string
-	TelegramChatID   string
-	TelegramEnabled  bool
-
-	// Email
-	SMTPHost      string
-	SMTPPort      int
-	SMTPUser      string
-	SMTPPassword  string
-	SMTPFromEmail string
-	EmailEnabled  bool
+	TelegramBotToken string `envconfig:"TELEGRAM_BOT_TOKEN"`
+	TelegramChatID   string `envconfig:"TELEGRAM_CHAT_ID"`
+	TelegramEnabled  bool   `envconfig:"TELEGRAM_ENABLED"`
 
 	// Обработка сообщений
-	MessageProcessingTimeout int
-	MaxRetries               int
+	MessageProcessingTimeout int `envconfig:"MESSAGE_PROCESSING_TIMEOUT"`
+	MaxRetries               int `envconfig:"MAX_RETRIES"`
 }
 
 // Notification структура для уведомления в БД
 type Notification struct {
 	ID               int
-	UserID           int
+	UserID           int64
 	BookingID        *int
 	Message          string
 	NotificationType string
@@ -62,7 +56,6 @@ type KafkaMessage struct {
 // User структура для пользователя
 type User struct {
 	ID         int
-	Email      string
 	Hash       string
 	Role       string
 	TelegramID *string

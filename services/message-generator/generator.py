@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-VALID_USER_IDS = [123456789, 987654321, 111111111, 222222222, 1333800382]
+VALID_USER_IDS = [1333800382]
 VALID_BOOKING_IDS = [1, 2, 3, 4, 5, 6]
 VALID_ROOM_IDS = [1, 2, 3, 4, 5, 6]
 

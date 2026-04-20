@@ -24,7 +24,7 @@ func LoadConfig() error {
 		cfg.ServicePort = 8084
 	}
 	if cfg.DatabaseURL == "" {
-		cfg.DatabaseURL = "postgresql://notification_user:notification_password@postgres:5432/notification_db"
+		cfg.DatabaseURL = "postgresql://notification_user:notification_password@postgres:5432/booking"
 	}
 	if cfg.KafkaBootstrapServers == "" {
 		cfg.KafkaBootstrapServers = "kafka:9092"
@@ -43,9 +43,6 @@ func LoadConfig() error {
 	}
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 3
-	}
-	if cfg.SMTPPort == 0 {
-		cfg.SMTPPort = 587
 	}
 
 	log.Printf("✅ Конфигурация загружена: %s:%d", cfg.ServiceName, cfg.ServicePort)

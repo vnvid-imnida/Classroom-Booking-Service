@@ -29,7 +29,7 @@ docker compose up -d
 docker compose ps
 
 # посмотреть логи конкретного сервиса
-docker compose logs -f notification-service
+docker compose logs -f notification
 ```
 
 ## Структура для командной работы
