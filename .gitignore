@@ -1,0 +1,151 @@
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv
+venv/
+ENV/
+env/
+.env
+*.env
+*.env.local
+*.env.*.local
+
+# ============================================================================
+# Go
+# ============================================================================
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Go build cache
+.cache/
+
+# ============================================================================
+# IDE / Editor
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.sublime-project
+.sublime-workspace
+*.iml
+.project
+.pydevproject
+.settings/
+.classpath
+*.code-workspace
+
+# ============================================================================
+# Docker & Container
+# ============================================================================
+docker-compose.override.yaml
+.dockerignore
+.containerignore
+
+# ============================================================================
+# Database & Logs
+# ============================================================================
+postgres_data/
+redis_data/
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================================================
+# Temporary files
+# ============================================================================
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+.tmp/
+temp/
+tmp/
+
+# ============================================================================
+# OS-specific
+# ============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ============================================================================
+# Node.js (if frontend is included)
+# ============================================================================
+node_modules/
+package-lock.json
+yarn.lock
+npm-debug.log
+yarn-error.log
+dist/
+.next/
+
+# ============================================================================
+# Kafka & Services Data
+# ============================================================================
+kafka-logs/
+zookeeper-data/
+
+# ============================================================================
+# Build artifacts
+# ============================================================================
+notification-service
+*.o
+*.a
+
+# ============================================================================
+# IDE specific
+# ============================================================================
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+.vscode/*.code-snippets

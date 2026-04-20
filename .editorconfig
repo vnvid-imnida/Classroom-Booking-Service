@@ -1,0 +1,52 @@
+# EditorConfig для консистентного форматирования кода
+# https://editorconfig.org
+
+root = true
+
+# Все файлы
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Python файлы
+[*.py]
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+# Go файлы
+[*.go]
+indent_style = tab
+indent_size = 8
+
+# JavaScript/TypeScript файлы (если будут)
+[*.{js,ts,jsx,tsx}]
+indent_style = space
+indent_size = 2
+
+# JSON файлы
+[*.json]
+indent_style = space
+indent_size = 2
+
+# YAML файлы
+[*.{yaml,yml}]
+indent_style = space
+indent_size = 2
+
+# Markdown
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
+
+# Docker
+[Dockerfile]
+indent_style = space
+indent_size = 2
+
+# SQL
+[*.sql]
+indent_style = space
+indent_size = 2
