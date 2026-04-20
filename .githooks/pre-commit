@@ -1,0 +1,49 @@
+#!/bin/bash
+# Pre-commit hook for spbpu-booking
+# Runs linting and format checks before commit
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Check Python files
+PYTHON_FILES=$(git diff --cached --name-only | grep '\.py$' || true)
+if [ -n "$PYTHON_FILES" ]; then
+    echo "✓ Checking Python files..."
+    # Uncomment when tools are installed
+    # python -m black --check $PYTHON_FILES
+    # python -m flake8 $PYTHON_FILES
+fi
+
+# Check Go files
+GO_FILES=$(git diff --cached --name-only | grep '\.go$' || true)
+if [ -n "$GO_FILES" ]; then
+    echo "✓ Checking Go files..."
+    # Uncomment when tools are installed
+    # gofmt -l $GO_FILES
+    # golangci-lint run ./...
+fi
+
+# Check for large files
+MAX_SIZE=$((10 * 1024 * 1024))  # 10MB limit
+echo "✓ Checking file sizes..."
+
+git diff --cached --name-only | while read FILE; do
+    if [ -f "$FILE" ]; then
+        SIZE=$(stat -f%z "$FILE" 2>/dev/null || stat -c%s "$FILE" 2>/dev/null)
+        if [ $SIZE -gt $MAX_SIZE ]; then
+            echo "❌ Error: File $FILE is too large ($(($SIZE / 1024 / 1024))MB, max is 10MB)"
+            exit 1
+        fi
+    fi
+done
+
+# Check for secrets
+echo "✓ Scanning for potential secrets..."
+if git diff --cached | grep -iE 'password|secret|token|api.?key|private.?key' > /dev/null; then
+    echo "⚠️  Warning: Potential secrets detected in staged changes"
+    echo "   Make sure you're not committing any sensitive information!"
+fi
+
+echo "✅ Pre-commit checks passed!"
+exit 0

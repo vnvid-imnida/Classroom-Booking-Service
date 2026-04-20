@@ -1,0 +1,28 @@
+#!/bin/bash
+# Prepare commit message hook for spbpu-booking
+# Helps format commit messages according to Conventional Commits
+
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=$2
+
+# Don't modify merge commits, squashes, etc.
+if [ -z "$COMMIT_SOURCE" ]; then
+    # Check if message starts with a valid type
+    if ! grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|ci)(\(.+\))?:' "$COMMIT_MSG_FILE"; then
+        echo ""
+        echo "⚠️  Your commit message doesn't follow Conventional Commits format!"
+        echo ""
+        echo "Valid formats:"
+        echo "  feat(scope): description"
+        echo "  fix(scope): description"
+        echo "  docs: description"
+        echo "  test(scope): description"
+        echo "  refactor(scope): description"
+        echo "  chore: description"
+        echo ""
+        echo "Scopes: auth, booking, notification, room, schedule, api-gateway, db, docker"
+        echo ""
+    fi
+fi
+
+exit 0
