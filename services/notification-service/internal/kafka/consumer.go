@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"notification-service/internal/database"
 	"notification-service/internal/models"
 	"notification-service/internal/notification"
 
@@ -34,23 +36,20 @@ func NewConsumerManager(cfg models.Config, notificationMgr *notification.Manager
 	ctx, cancel := context.WithCancel(context.Background())
 
 	topics := parseTopics(cfg.KafkaTopics)
-	log.Printf("📢 Подписка на топики: %v", topics)
+	log.Printf("Подписка на топики: %v", topics)
 
-	// Используем первый топик для Consumer Group, остальное управляется вручную
-	mainTopic := "booking.created" // Default
-	if len(topics) > 0 {
-		mainTopic = topics[0]
+	startOffset := kafka.FirstOffset
+	if strings.EqualFold(cfg.KafkaAutoOffsetReset, "latest") {
+		startOffset = kafka.LastOffset
 	}
 
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        []string{cfg.KafkaBootstrapServers},
 		GroupID:        cfg.KafkaGroupID,
-		Topic:          mainTopic,
-		StartOffset:    -1, // Latest offset
+		GroupTopics:    topics,
+		StartOffset:    startOffset,
 		CommitInterval: time.Second,
 		MaxBytes:       10e6,
-		Logger:         log.Default(),
-		ErrorLogger:    log.Default(),
 	})
 
 	return &ConsumerManager{
@@ -67,19 +66,19 @@ func (kcm *ConsumerManager) Start() {
 	kcm.isRunning.Store(true)
 	kcm.wg.Add(1)
 	go kcm.consume()
-	log.Println("✅ Kafka консьюмер запущен")
+	log.Println("Kafka консьюмер запущен")
 }
 
 // Stop останавливает консьюмер
 func (kcm *ConsumerManager) Stop() {
-	log.Println("⛔ Остановка Kafka консьюмера...")
+	log.Println("Остановка Kafka консьюмера...")
 	kcm.isRunning.Store(false)
 	kcm.cancel()
 	if err := kcm.reader.Close(); err != nil {
-		log.Printf("❌ Ошибка закрытия reader: %v", err)
+		log.Printf("Ошибка закрытия reader: %v", err)
 	}
 	kcm.wg.Wait()
-	log.Println("✅ Kafka консьюмер остановлен")
+	log.Println("Kafka консьюмер остановлен")
 }
 
 // consume обрабатывает сообщения из Kafka
@@ -93,7 +92,6 @@ func (kcm *ConsumerManager) consume() {
 		default:
 		}
 
-		// Чтение сообщения с таймаутом
 		ctx, cancel := context.WithTimeout(kcm.ctx, 30*time.Second)
 		msg, err := kcm.reader.FetchMessage(ctx)
 		cancel()
@@ -102,12 +100,14 @@ func (kcm *ConsumerManager) consume() {
 			if err == context.Canceled {
 				return
 			}
-			log.Printf("❌ Ошибка при чтении из Kafka: %v", err)
+			if isNoMessageError(err) {
+				continue
+			}
+			log.Printf("Ошибка при чтении из Kafka: %v", err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		// Обработка сообщения
 		go kcm.handleMessage(msg)
 	}
 }
@@ -119,70 +119,111 @@ func (kcm *ConsumerManager) handleMessage(msg kafka.Message) {
 
 	var kafkaMsg models.KafkaMessage
 	if err := json.Unmarshal(msg.Value, &kafkaMsg); err != nil {
-		log.Printf("❌ Ошибка десериализации сообщения: %v", err)
+		log.Printf("Ошибка десериализации сообщения: %v", err)
 		kcm.failedCount.Add(1)
 		return
 	}
 
-	log.Printf("📬 Получено сообщение: EventType=%s, EventID=%s", kafkaMsg.EventType, kafkaMsg.EventID)
+	log.Printf("Получено сообщение: EventType=%s, EventID=%s", kafkaMsg.EventType, kafkaMsg.EventID)
 
-	// Обработка сообщения
 	if err := kcm.processEvent(ctx, kafkaMsg); err != nil {
-		log.Printf("❌ Ошибка обработки события: %v", err)
+		log.Printf("Ошибка обработки события: %v", err)
 		kcm.failedCount.Add(1)
 		return
 	}
 
-	// Коммит смещения
 	if err := kcm.reader.CommitMessages(ctx, msg); err != nil {
-		log.Printf("⚠️ Ошибка коммита смещения: %v", err)
+		log.Printf("Ошибка коммита смещения: %v", err)
 	}
 
 	kcm.processedCount.Add(1)
-	log.Printf("✅ Сообщение обработано (всего: %d)", kcm.processedCount.Load())
+	log.Printf("Сообщение обработано (всего: %d)", kcm.processedCount.Load())
 }
 
 // processEvent обрабатывает событие в зависимости от типа
 func (kcm *ConsumerManager) processEvent(ctx context.Context, kafkaMsg models.KafkaMessage) error {
 	eventType := kafkaMsg.EventType
 	data := kafkaMsg.Data
-
-	var userID int
-	var bookingID *int
 	var message string
+
+	if isUserEvent(eventType) {
+		telegramID, ok := getTelegramID(data)
+		if !ok {
+			return fmt.Errorf("user event без telegram_id/user_id: %s", eventType)
+		}
+
+		username := getOptionalStringField(data, "username")
+		if username == nil {
+			username = getOptionalStringField(data, "telegram_username")
+		}
+
+		userID, err := database.UpsertUserByTelegramID(ctx, telegramID, username)
+		if err != nil {
+			return fmt.Errorf("ошибка upsert пользователя: %w", err)
+		}
+
+		log.Printf("Пользователь обработан: id=%d, event=%s", userID, eventType)
+		return nil
+	}
 
 	switch {
 	case isBookingEvent(eventType):
-		// Обработка события бронирования
-		if bid, ok := data["booking_id"].(float64); ok {
-			id := int(bid)
-			bookingID = &id
-			// TODO: получить пользователя по бронированию
-			userID = int(data["user_id"].(float64))
-		} else {
+		if _, ok := getIntField(data, "booking_id"); !ok {
 			return fmt.Errorf("booking_id не найден в сообщении")
 		}
+
+		userID, ok := getIntField(data, "user_id")
+		if !ok {
+			return fmt.Errorf("user_id не найден в сообщении для события %s", eventType)
+		}
+
+		username := getOptionalStringField(data, "username")
+		if username == nil {
+			username = getOptionalStringField(data, "telegram_username")
+		}
+
+		localUserID, err := database.UpsertUserByTelegramID(ctx, fmt.Sprintf("%d", userID), username)
+		if err != nil {
+			return fmt.Errorf("ошибка upsert пользователя из booking события: %w", err)
+		}
 		message = notification.FormatBookingMessage(eventType, data)
+		return kcm.notificationMgr.SendNotification(ctx, localUserID, message, eventType, kafkaMsg.EventID)
 
 	case isRoomEvent(eventType):
-		// Обработка события комнаты - отправляем администратору
-		userID = 1 // TODO: получить из конфига admin_user_id
+		if telegramID, ok := getTelegramID(data); ok {
+			username := getOptionalStringField(data, "username")
+			if username == nil {
+				username = getOptionalStringField(data, "telegram_username")
+			}
+			if _, err := database.UpsertUserByTelegramID(ctx, telegramID, username); err != nil {
+				log.Printf("Не удалось upsert пользователя по telegram_id=%s: %v", telegramID, err)
+			}
+		}
 		message = notification.FormatRoomMessage(eventType, data)
+		return kcm.notificationMgr.SendBroadcastNotification(ctx, message, eventType, kafkaMsg.EventID)
 
 	case isScheduleEvent(eventType):
-		// Обработка события расписания - отправляем администратору
-		userID = 1 // TODO: получить из конфига admin_user_id
 		message = notification.FormatScheduleMessage(eventType, data)
+		return kcm.notificationMgr.SendBroadcastNotification(ctx, message, eventType, kafkaMsg.EventID)
 
 	default:
 		return fmt.Errorf("неизвестный тип события: %s", eventType)
 	}
-
-	// Отправка уведомления
-	return kcm.notificationMgr.SendNotification(ctx, userID, message, eventType, bookingID)
 }
 
-// Helper функции для определения типа события
+func isNoMessageError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	msg := err.Error()
+	if strings.Contains(msg, "Request Timed Out") {
+		return true
+	}
+
+	return false
+}
+
 func isBookingEvent(eventType string) bool {
 	return strings.HasPrefix(eventType, "booking.")
 }
@@ -195,6 +236,10 @@ func isScheduleEvent(eventType string) bool {
 	return strings.HasPrefix(eventType, "schedule.")
 }
 
+func isUserEvent(eventType string) bool {
+	return strings.HasPrefix(eventType, "user.")
+}
+
 // parseTopics парсит строку топиков в срез
 func parseTopics(topicsStr string) []string {
 	if topicsStr == "" {
@@ -202,6 +247,7 @@ func parseTopics(topicsStr string) []string {
 			"booking.created",
 			"booking.updated",
 			"booking.cancelled",
+			"user.created",
 			"room.maintenance",
 			"room.updated",
 			"schedule.synced",
@@ -216,6 +262,62 @@ func parseTopics(topicsStr string) []string {
 		}
 	}
 	return topics
+}
+
+func getIntField(data map[string]interface{}, key string) (int, bool) {
+	v, ok := data[key]
+	if !ok {
+		return 0, false
+	}
+
+	switch value := v.(type) {
+	case float64:
+		return int(value), true
+	case int:
+		return value, true
+	default:
+		return 0, false
+	}
+}
+
+func getTelegramID(data map[string]interface{}) (string, bool) {
+	if value, ok := data["telegram_id"]; ok {
+		switch v := value.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				return v, true
+			}
+		case float64:
+			return fmt.Sprintf("%.0f", v), true
+		case int:
+			return fmt.Sprintf("%d", v), true
+		}
+	}
+
+	if value, ok := data["user_id"]; ok {
+		switch v := value.(type) {
+		case float64:
+			return fmt.Sprintf("%.0f", v), true
+		case int:
+			return fmt.Sprintf("%d", v), true
+		}
+	}
+
+	return "", false
+}
+
+func getOptionalStringField(data map[string]interface{}, key string) *string {
+	v, ok := data[key]
+	if !ok {
+		return nil
+	}
+
+	s, ok := v.(string)
+	if !ok || strings.TrimSpace(s) == "" {
+		return nil
+	}
+
+	return &s
 }
 
 // GetMetrics возвращает метрики обработки
