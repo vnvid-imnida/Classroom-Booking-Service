@@ -282,7 +282,7 @@ class FakeMessageGenerator:
                     "start": lesson_start.isoformat() + "Z",
                     "end": lesson_end.isoformat() + "Z"
                 },
-                "resolution": random.choice(["auto_cancelled", "reschedule_required"])
+                "resolution": "auto_cancelled"
             }
         }
         return event

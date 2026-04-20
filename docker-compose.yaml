@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # Database
   postgres:
     image: postgres:15-alpine
     container_name: notification-postgres
@@ -13,8 +12,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/001_init.sql
-      - ./database/migrations/0001_insert_test_data.sql:/docker-entrypoint-initdb.d/002_test_data.sql
     networks:
       - notification-network
     healthcheck:
@@ -23,7 +20,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Cache
   redis:
     image: redis:7-alpine
     container_name: notification-redis
@@ -39,7 +35,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Kafka & Zookeeper
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: notification-zookeeper
@@ -73,7 +68,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Kafka UI for monitoring
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: notification-kafka-ui
@@ -88,10 +82,9 @@ services:
     networks:
       - notification-network
 
-  # Message Generator (for testing)
   message-generator:
     build:
-      context: ./message-generator
+      context: ./services/message-generator
       dockerfile: Dockerfile
     container_name: notification-message-generator
     depends_on:
@@ -101,37 +94,15 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     networks:
       - notification-network
+    profiles:
+      - generator
     restart: "no"
 
-  # Room Service
-  room-service:
-    build:
-      context: ./services/room-service
-      dockerfile: Dockerfile
-    container_name: notification-room-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8081:8081"
-    environment:
-      SERVICE_NAME: room-service
-      SERVICE_PORT: 8081
-      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_URL: redis://redis:6379
-    networks:
-      - notification-network
-    restart: unless-stopped
-
-  # Schedule Service
-  schedule-service:
+  parser-service:
     build:
       context: ./services/schedule-service
       dockerfile: Dockerfile
-    container_name: notification-schedule-service
+    container_name: notification-parser-service
     depends_on:
       postgres:
         condition: service_healthy
@@ -140,7 +111,7 @@ services:
     ports:
       - "8082:8082"
     environment:
-      SERVICE_NAME: schedule-service
+      SERVICE_NAME: parser-service
       SERVICE_PORT: 8082
       DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -149,12 +120,11 @@ services:
       - notification-network
     restart: unless-stopped
 
-  # Booking Service
-  booking-service:
+  backend:
     build:
       context: ./services/booking-service
       dockerfile: Dockerfile
-    container_name: notification-booking-service
+    container_name: notification-backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -163,7 +133,7 @@ services:
     ports:
       - "8083:8083"
     environment:
-      SERVICE_NAME: booking-service
+      SERVICE_NAME: backend
       SERVICE_PORT: 8083
       DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -172,7 +142,6 @@ services:
       - notification-network
     restart: unless-stopped
 
-  # Notification Service (Golang)
   notification-service:
     build:
       context: ./services/notification-service
@@ -194,7 +163,7 @@ services:
       DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_GROUP_ID: notification-service-group
-      KAFKA_TOPICS: "booking.created,booking.updated,booking.cancelled,room.maintenance,room.updated,schedule.synced,schedule.conflict"
+      KAFKA_TOPICS: "booking.created,booking.updated,booking.cancelled,schedule.synced,schedule.conflict"
       REDIS_URL: redis://redis:6379
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
@@ -216,51 +185,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # Auth Service
-  auth-service:
-    build:
-      context: ./services/auth-service
-      dockerfile: Dockerfile
-    container_name: notification-auth-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8085:8085"
-    environment:
-      SERVICE_NAME: auth-service
-      SERVICE_PORT: 8085
-      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
-    networks:
-      - notification-network
-    restart: unless-stopped
-
-  # API Gateway
-  api-gateway:
-    build:
-      context: ./services/api-gateway
-      dockerfile: Dockerfile
-    container_name: notification-api-gateway
-    depends_on:
-      - room-service
-      - schedule-service
-      - booking-service
-      - notification-service
-      - auth-service
-    ports:
-      - "8000:8000"
-    environment:
-      SERVICE_NAME: api-gateway
-      SERVICE_PORT: 8000
-      ROOM_SERVICE_URL: http://room-service:8081
-      SCHEDULE_SERVICE_URL: http://schedule-service:8082
-      BOOKING_SERVICE_URL: http://booking-service:8083
-      NOTIFICATION_SERVICE_URL: http://notification-service:8084
-      AUTH_SERVICE_URL: http://auth-service:8085
-    networks:
-      - notification-network
-    restart: unless-stopped
-
 networks:
   notification-network:
     driver: bridge
@@ -268,63 +192,3 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-      - "8085:8085"
-    environment:
-      SERVICE_NAME: auth-service
-      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
-      REDIS_URL: redis://redis:6379
-    networks:
-      - notification-network
-    restart: unless-stopped
-
-  # API Gateway
-  api-gateway:
-    build:
-      context: ./services/api-gateway
-      dockerfile: Dockerfile
-    container_name: notification-api-gateway
-    depends_on:
-      - room-service
-      - schedule-service
-      - booking-service
-      - notification-service
-      - auth-service
-    ports:
-      - "3000:3000"
-    environment:
-      SERVICE_NAME: api-gateway
-      ROOM_SERVICE_URL: http://room-service:8081
-      SCHEDULE_SERVICE_URL: http://schedule-service:8082
-      BOOKING_SERVICE_URL: http://booking-service:8083
-      NOTIFICATION_SERVICE_URL: http://notification-service:8084
-      AUTH_SERVICE_URL: http://auth-service:8085
-    networks:
-      - notification-network
-    restart: unless-stopped
-
-  # Message Generator for Testing
-  message-generator:
-    build:
-      context: ./message-generator
-      dockerfile: Dockerfile
-    container_name: notification-message-generator
-    depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      GENERATOR_MODE: ${GENERATOR_MODE:-manual}
-      GENERATOR_INTERVAL: ${GENERATOR_INTERVAL:-10}
-    networks:
-      - notification-network
-    profiles:
-      - testing
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
-  redis_data:
-
-networks:
-  notification-network:
-    driver: bridge

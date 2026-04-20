@@ -24,9 +24,9 @@ func NewManager(cfg models.Config) *Manager {
 }
 
 // SendNotification отправляет уведомление через все доступные каналы
-func (nm *Manager) SendNotification(ctx context.Context, userID int, message, notificationType string, bookingID *int) error {
+func (nm *Manager) SendNotification(ctx context.Context, userID int, message, notificationType, eventID string, bookingID *int) error {
 	// Сохранение в БД
-	notificationID, err := database.SaveNotification(ctx, userID, bookingID, message, notificationType, "")
+	notificationID, err := database.SaveNotification(ctx, userID, bookingID, message, notificationType, eventID)
 	if err != nil {
 		log.Printf("❌ Ошибка сохранения уведомления: %v", err)
 		return err
@@ -58,6 +58,31 @@ func (nm *Manager) SendNotification(ctx context.Context, userID int, message, no
 	_ = database.UpdateNotificationStatus(ctx, notificationID, "sent", nil)
 
 	return nil
+}
+
+// SendBroadcastNotification отправляет уведомление всем пользователям
+func (nm *Manager) SendBroadcastNotification(ctx context.Context, message, notificationType, eventID string) error {
+	userIDs, err := database.GetAllUserIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("ошибка получения пользователей для рассылки: %w", err)
+	}
+
+	if len(userIDs) == 0 {
+		log.Printf("⚠️ Широковещательное уведомление %s пропущено: нет пользователей", notificationType)
+		return nil
+	}
+
+	var firstErr error
+	for _, userID := range userIDs {
+		if sendErr := nm.SendNotification(ctx, userID, message, notificationType, eventID, nil); sendErr != nil {
+			log.Printf("⚠️ Ошибка широковещательной отправки пользователю %d: %v", userID, sendErr)
+			if firstErr == nil {
+				firstErr = sendErr
+			}
+		}
+	}
+
+	return firstErr
 }
 
 // sendTelegram отправляет сообщение в Telegram

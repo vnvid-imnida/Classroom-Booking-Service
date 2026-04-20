@@ -8,6 +8,7 @@ import (
 
 	"notification-service/internal/models"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -62,6 +63,88 @@ func GetPool() *pgxpool.Pool {
 	return dbPool
 }
 
+// UpsertUserByTelegramID находит или создает пользователя по Telegram ID
+func UpsertUserByTelegramID(ctx context.Context, telegramID string, username *string) (int, error) {
+	if dbPool == nil {
+		return 0, fmt.Errorf("БД не инициализирована")
+	}
+
+	var existingID int
+	err := dbPool.QueryRow(
+		ctx,
+		`SELECT id FROM users WHERE telegram_id = $1 ORDER BY id LIMIT 1`,
+		telegramID,
+	).Scan(&existingID)
+	if err == nil {
+		return existingID, nil
+	}
+
+	email := fmt.Sprintf("tg_%s_%d@local.invalid", telegramID, time.Now().UnixNano())
+	if username != nil {
+		email = fmt.Sprintf("%s_%d@local.invalid", *username, time.Now().UnixNano())
+	}
+
+	var userID int
+	err = dbPool.QueryRow(
+		ctx,
+		`INSERT INTO users (email, hash, role, telegram_id)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		email,
+		"external_auth",
+		"user",
+		telegramID,
+	).Scan(&userID)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка upsert пользователя по telegram_id: %w", err)
+	}
+
+	return userID, nil
+}
+
+// BookingExists проверяет существование бронирования по ID
+func BookingExists(ctx context.Context, bookingID int) (bool, error) {
+	if dbPool == nil {
+		return false, fmt.Errorf("БД не инициализирована")
+	}
+
+	var exists bool
+	err := dbPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bookings WHERE id = $1)`, bookingID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("ошибка проверки существования бронирования: %w", err)
+	}
+
+	return exists, nil
+}
+
+// GetAllUserIDs возвращает всех пользователей для широковещательных уведомлений
+func GetAllUserIDs(ctx context.Context) ([]int, error) {
+	if dbPool == nil {
+		return nil, fmt.Errorf("БД не инициализирована")
+	}
+
+	rows, err := dbPool.Query(ctx, `SELECT id FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения списка пользователей: %w", err)
+	}
+	defer rows.Close()
+
+	userIDs := make([]int, 0)
+	for rows.Next() {
+		var userID int
+		if scanErr := rows.Scan(&userID); scanErr != nil {
+			return nil, fmt.Errorf("ошибка чтения user_id: %w", scanErr)
+		}
+		userIDs = append(userIDs, userID)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("ошибка итерации списка пользователей: %w", rows.Err())
+	}
+
+	return userIDs, nil
+}
+
 // SaveNotification сохраняет уведомление в БД
 func SaveNotification(ctx context.Context, userID int, bookingID *int, message, notificationType, eventID string) (int, error) {
 	if dbPool == nil {
@@ -81,6 +164,15 @@ func SaveNotification(ctx context.Context, userID int, bookingID *int, message, 
 	err := dbPool.QueryRow(ctx, query,
 		userID, bookingID, message, notificationType, eventID, "pending", now, now,
 	).Scan(&notificationID)
+
+	if err != nil && bookingID != nil {
+		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23503" {
+			log.Printf("⚠️ booking_id=%d не прошел FK-проверку, сохраняем уведомление без booking_id", *bookingID)
+			err = dbPool.QueryRow(ctx, query,
+				userID, nil, message, notificationType, eventID, "pending", now, now,
+			).Scan(&notificationID)
+		}
+	}
 
 	if err != nil {
 		return 0, fmt.Errorf("ошибка сохранения уведомления: %w", err)

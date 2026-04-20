@@ -168,7 +168,8 @@ func (kcm *ConsumerManager) processEvent(ctx context.Context, kafkaMsg models.Ka
 
 	switch {
 	case isBookingEvent(eventType):
-		if _, ok := getIntField(data, "booking_id"); !ok {
+		bookingIDValue, ok := getIntField(data, "booking_id")
+		if !ok {
 			return fmt.Errorf("booking_id не найден в сообщении")
 		}
 
@@ -186,8 +187,10 @@ func (kcm *ConsumerManager) processEvent(ctx context.Context, kafkaMsg models.Ka
 		if err != nil {
 			return fmt.Errorf("ошибка upsert пользователя из booking события: %w", err)
 		}
+
+		bookingID := &bookingIDValue
 		message = notification.FormatBookingMessage(eventType, data)
-		return kcm.notificationMgr.SendNotification(ctx, localUserID, message, eventType, kafkaMsg.EventID)
+		return kcm.notificationMgr.SendNotification(ctx, localUserID, message, eventType, kafkaMsg.EventID, bookingID)
 
 	case isRoomEvent(eventType):
 		if telegramID, ok := getTelegramID(data); ok {

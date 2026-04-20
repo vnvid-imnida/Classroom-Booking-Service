@@ -36,7 +36,6 @@ docker compose logs -f notification-service
 
 ```text
 services/    # сервисы проекта
-database/    # SQL и миграции
 .github/     # шаблоны issue/PR
 ```
 
