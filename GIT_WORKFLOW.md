@@ -32,7 +32,7 @@ refactor(scope): ...
 chore: ...
 ```
 
-Примеры scope: `booking`, `notification`, `schedule`, `room`, `auth`, `api-gateway`, `docker`, `db`.
+Примеры scope: `backend`, `notification`, `parser`, `telegram-frontend`, `generator`, `docker`, `db`.
 
 ## Pull Request
 

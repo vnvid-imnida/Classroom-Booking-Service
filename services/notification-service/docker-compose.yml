@@ -67,7 +67,7 @@ services:
       DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_GROUP_ID: notification-service-group
-      KAFKA_TOPICS: booking.created,booking.updated,booking.cancelled,room.maintenance,room.updated,schedule.synced,schedule.conflict
+      KAFKA_TOPICS: booking.created,booking.updated,booking.cancelled,schedule.synced,schedule.conflict
       MESSAGE_PROCESSING_TIMEOUT: 30
       MAX_RETRIES: 3
     networks:
