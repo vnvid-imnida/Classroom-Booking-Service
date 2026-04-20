@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
-	"strings"
+	"net/url"
 
 	"notification-service/internal/database"
 	"notification-service/internal/models"
@@ -78,14 +78,14 @@ func (nm *Manager) sendTelegram(ctx context.Context, userID int, message string)
 	}
 
 	// Отправка через Telegram Bot API
-	url := fmt.Sprintf(
+	apiURL := fmt.Sprintf(
 		"https://api.telegram.org/bot%s/sendMessage?chat_id=%s&text=%s",
 		nm.cfg.TelegramBotToken,
 		telegramID,
-		strings.ReplaceAll(message, " ", "%20"),
+		url.QueryEscape(message),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("ошибка создания запроса: %w", err)
 	}

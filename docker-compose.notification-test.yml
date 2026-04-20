@@ -1,0 +1,108 @@
+version: '3.8'
+
+# Минимальный стек для тестирования notification-service
+# Запуск: docker compose -f docker-compose.notification-test.yml up --build
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: test-postgres
+    environment:
+      POSTGRES_USER: notification_user
+      POSTGRES_PASSWORD: notification_password
+      POSTGRES_DB: notification_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - test_postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/001_init.sql
+      - ./database/migrations/0001_insert_test_data.sql:/docker-entrypoint-initdb.d/002_test_data.sql
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: test-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - test-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: test-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: test-notification-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    environment:
+      SERVICE_NAME: notification-service
+      SERVICE_PORT: 8084
+      DATABASE_URL: postgresql://notification_user:notification_password@postgres:5432/notification_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_GROUP_ID: notification-service-group
+      KAFKA_TOPICS: "booking.created,booking.updated,booking.cancelled,room.maintenance,room.updated,schedule.synced,schedule.conflict"
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      TELEGRAM_ENABLED: "true"
+      EMAIL_ENABLED: "false"
+      MESSAGE_PROCESSING_TIMEOUT: 30
+      MAX_RETRIES: 3
+    networks:
+      - test-network
+    restart: unless-stopped
+
+  message-generator:
+    build:
+      context: ./message-generator
+      dockerfile: Dockerfile
+    container_name: test-message-generator
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    networks:
+      - test-network
+    restart: "no"
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  test_postgres_data:
