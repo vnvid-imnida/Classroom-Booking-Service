@@ -2,11 +2,13 @@ import { apiClient } from './client';
 import type {
   Booking,
   LoginPayload,
+  RegisterPayload,
   Room,
   RoomCreatePayload,
   RoomSearchFilters,
   User,
 } from '../types';
+import { roleForEmail } from '../utils/emailDomains';
 import {
   isMockMode,
   isTestCredentials,
@@ -15,19 +17,73 @@ import {
   mockRoomsApi,
 } from './mock';
 
+type BackendUser = {
+  id: string;
+  email?: string;
+  full_name?: string;
+  fullName?: string;
+  role?: string;
+};
+
+type BackendAuthResponse = {
+  access_token?: string;
+  token?: string;
+  user: BackendUser;
+};
+
+function mapRole(role?: string): User['role'] {
+  const r = (role || 'TEACHER').toLowerCase();
+  if (r === 'admin') return 'admin';
+  if (r === 'moderator') return 'moderator';
+  if (r === 'student') return 'student';
+  return 'teacher';
+}
+
+/** Prefer domain-based student/teacher; keep moderator/admin from API. */
+function resolveUserRole(raw: BackendUser): User['role'] {
+  const email = raw.email || '';
+  const fromApi = mapRole(raw.role);
+  const fromDomain = roleForEmail(email);
+  if (fromApi === 'admin' || fromApi === 'moderator') return fromApi;
+  if (fromDomain) return fromDomain;
+  return fromApi;
+}
+
+function mapUser(raw: BackendUser): User {
+  return {
+    id: raw.id,
+    email: raw.email || '',
+    fullName: raw.full_name || raw.fullName || '',
+    role: resolveUserRole(raw),
+  };
+}
+
+function mapAuthResponse(data: BackendAuthResponse) {
+  const token = data.access_token || data.token;
+  if (!token) throw new Error('Ответ API без токена');
+  return { token, user: mapUser(data.user) };
+}
+
 export const authApi = {
   login: (payload: LoginPayload) => {
-    // Тестовые учётки → mock
     if (isTestCredentials(payload).ok) {
       return mockAuthApi.login(payload);
     }
     return apiClient
-      .post<{ token: string; user: User }>('/auth/login', payload)
-      .then((r) => r.data);
+      .post<BackendAuthResponse>('/api/v1/auth/login', payload)
+      .then((r) => mapAuthResponse(r.data));
   },
+  register: (payload: RegisterPayload) =>
+    apiClient
+      .post<BackendAuthResponse>('/api/v1/auth/register', {
+        email: payload.email.trim().toLowerCase(),
+        password: payload.password,
+        full_name: payload.fullName,
+      })
+      .then((r) => mapAuthResponse(r.data)),
   me: () => {
     if (isMockMode()) return mockAuthApi.me();
-    return apiClient.get<User>('/auth/me').then((r) => r.data);
+    return apiClient.get<BackendUser>('/api/v1/me').then((r) => mapUser(r.data));
   },
 };
 

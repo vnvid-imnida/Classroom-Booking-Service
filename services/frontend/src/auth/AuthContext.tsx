@@ -8,6 +8,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, fullName: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -39,6 +40,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(user);
   };
 
+  const register = async (email: string, password: string, fullName: string) => {
+    const { token, user } = await authApi.register({ email, password, fullName });
+    localStorage.setItem('auth_token', token);
+    setUser(user);
+  };
+
   const logout = () => {
     localStorage.removeItem('auth_token');
     setUser(null);
@@ -50,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: !!user,
       isLoading,
       login,
+      register,
       logout,
     }),
     [user, isLoading],
