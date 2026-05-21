@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Box, Paper, TextField, Button, Typography, Alert, Stack, Divider,
+  Box, Paper, TextField, Button, Typography, Alert, Stack,
 } from '@mui/material';
 import { useAuth } from '../auth/AuthContext';
-import { TEST_EMAIL, TEST_PASSWORD, ADMIN_EMAIL, ADMIN_PASSWORD } from '../api/mock';
 import { getApiErrorMessage } from '../utils/apiError';
 
-export default function LoginPage() {
-  const { login, isAuthenticated, isLoading } = useAuth();
+export default function RegisterPage() {
+  const { register, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -30,26 +30,23 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email, password);
+      await register(email, password, fullName);
       navigate('/schedule', { replace: true });
     } catch (err) {
-      setError(getApiErrorMessage(err, 'Не удалось войти. Проверьте email и пароль.'));
+      setError(getApiErrorMessage(err, 'Не удалось зарегистрироваться. Проверьте данные.'));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const useUser = () => { setEmail(TEST_EMAIL); setPassword(TEST_PASSWORD); setError(null); };
-  const useAdmin = () => { setEmail(ADMIN_EMAIL); setPassword(ADMIN_PASSWORD); setError(null); };
-
   return (
     <Box display="flex" justifyContent="center" alignItems="center" minHeight="70vh">
       <Paper elevation={3} sx={{ p: 4, width: '100%', maxWidth: 460 }}>
         <Typography variant="h1" sx={{ fontSize: '1.75rem', mb: 1 }}>
-          Вход в систему
+          Регистрация
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Введите учётные данные СПбПУ. Для Telegram-бота используйте /login в чате.
+          Учётная запись для бронирования аудиторий СПбПУ. После регистрации войдите в Telegram-боте: /login
         </Typography>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -57,12 +54,19 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit}>
           <Stack spacing={2}>
             <TextField
+              label="ФИО"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              required
+              autoFocus
+              fullWidth
+            />
+            <TextField
               label="Email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              autoFocus
               fullWidth
             />
             <TextField
@@ -71,6 +75,8 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              helperText="Минимум 6 символов"
+              inputProps={{ minLength: 6 }}
               fullWidth
             />
             <Button
@@ -79,30 +85,14 @@ export default function LoginPage() {
               size="large"
               disabled={submitting || isLoading}
             >
-              {submitting ? 'Входим...' : 'Войти'}
+              {submitting ? 'Регистрируем...' : 'Зарегистрироваться'}
             </Button>
             <Typography variant="body2" sx={{ textAlign: 'center' }}>
-              Нет аккаунта? <Link to="/register">Зарегистрироваться</Link>
+              Уже есть аккаунт?{' '}
+              <Link to="/login">Войти</Link>
             </Typography>
           </Stack>
         </form>
-
-        <Divider sx={{ my: 3 }}>Демо-режим</Divider>
-        <Alert
-          severity="info"
-          action={
-            <Stack direction="row" spacing={1}>
-              <Button color="inherit" size="small" onClick={useUser}>Студент</Button>
-              <Button color="inherit" size="small" onClick={useAdmin}>Админ</Button>
-            </Stack>
-          }
-        >
-          Для просмотра без backend:
-          <br />
-          <strong>{TEST_EMAIL}</strong> / <strong>{TEST_PASSWORD}</strong>
-          <br />
-          <strong>{ADMIN_EMAIL}</strong> / <strong>{ADMIN_PASSWORD}</strong>
-        </Alert>
       </Paper>
     </Box>
   );

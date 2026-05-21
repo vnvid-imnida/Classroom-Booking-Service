@@ -1,0 +1,7 @@
+BEGIN;
+
+UPDATE event_purposes SET name = U&'\041B\0435\043A\0446\0438\044F' WHERE code = 'LECTURE';
+UPDATE event_purposes SET name = U&'\042D\043A\0437\0430\043C\0435\043D' WHERE code = 'EXAM';
+UPDATE event_purposes SET name = U&'\0421\043E\0431\0440\0430\043D\0438\0435' WHERE code = 'MEETING';
+
+COMMIT;

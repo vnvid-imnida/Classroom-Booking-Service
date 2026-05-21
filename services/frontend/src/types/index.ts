@@ -35,6 +35,12 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface RegisterPayload {
+  email: string;
+  password: string;
+  full_name: string;
+}
+
 export interface RoomSearchFilters {
   building?: string;
   minCapacity?: number;

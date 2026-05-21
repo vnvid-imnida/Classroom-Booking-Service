@@ -2,6 +2,7 @@ import { apiClient } from './client';
 import type {
   Booking,
   LoginPayload,
+  RegisterPayload,
   Room,
   RoomCreatePayload,
   RoomSearchFilters,
@@ -15,6 +16,17 @@ import {
   mockRoomsApi,
 } from './mock';
 
+function mapAuthUser(raw: Record<string, unknown>): User {
+  const roleRaw = String(raw.role ?? 'student').toLowerCase();
+  const role = (roleRaw === 'teacher' ? 'teacher' : roleRaw) as User['role'];
+  return {
+    id: String(raw.id),
+    email: String(raw.email ?? ''),
+    fullName: String(raw.full_name ?? raw.fullName ?? ''),
+    role,
+  };
+}
+
 export const authApi = {
   login: (payload: LoginPayload) => {
     // Тестовые учётки → mock
@@ -22,12 +34,27 @@ export const authApi = {
       return mockAuthApi.login(payload);
     }
     return apiClient
-      .post<{ token: string; user: User }>('/auth/login', payload)
-      .then((r) => r.data);
+      .post<{ access_token: string; user: Record<string, unknown> }>('/auth/login', payload)
+      .then((r) => ({
+        token: r.data.access_token,
+        user: mapAuthUser(r.data.user),
+      }));
   },
+  register: (payload: RegisterPayload) =>
+    apiClient
+      .post<{ access_token: string; user: Record<string, unknown> }>('/auth/register', payload)
+      .then((r) => ({
+        token: r.data.access_token,
+        user: mapAuthUser(r.data.user),
+      })),
   me: () => {
     if (isMockMode()) return mockAuthApi.me();
-    return apiClient.get<User>('/auth/me').then((r) => r.data);
+    return apiClient.get<Record<string, unknown>>('/me').then((r) => ({
+      id: String(r.data.id),
+      email: String(r.data.email ?? ''),
+      fullName: String(r.data.full_name ?? r.data.fullName ?? ''),
+      role: String(r.data.role ?? 'student').toLowerCase() as User['role'],
+    }));
   },
 };
 
