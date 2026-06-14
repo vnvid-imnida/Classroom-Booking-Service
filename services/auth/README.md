@@ -12,4 +12,10 @@ HTTP handlers live in `services/backend/app.py`; bot and web are thin clients.
 
 **Bot-specific (not here):** FSM states, inline keyboards, `AuthMiddleware`, `X-Telegram-Id` headers.
 
-**Backend:** imports `auth.*`; JWT/password hashing stays in `services/backend/auth_utils.py`.
+**Backend:** imports `auth.*`; JWT and password hashing live in `services/backend/auth_utils.py`.
+
+### Password hashing
+
+- Passwords: **bcrypt** (12 rounds by default, override with `BCRYPT_ROUNDS`).
+- Stored format: `$2b$12$...` (60-char bcrypt string).
+- Web and Telegram bot use the same register/login API — no client-side hashing.

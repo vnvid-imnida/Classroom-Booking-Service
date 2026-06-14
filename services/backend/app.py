@@ -550,6 +550,10 @@ def web_login(
                 )
                 user["role"] = expected_role
 
+            # Commit role updates before Telegram bind. A 409 on bind used to
+            # raise HTTPException and roll back the whole transaction.
+            conn.commit()
+
             if x_telegram_id is not None:
                 user, _ = _bind_telegram_to_web_user(
                     conn,
