@@ -20,7 +20,6 @@ Web UI: React SPA at `services/frontend` (`/register`, `/login`). Bot login: `/l
 |--------|------|-------------|
 | POST | `/api/v1/auth/register` | Web signup (`email`, `password`, `full_name`) → JWT |
 | POST | `/api/v1/auth/login` | Web login → JWT; with `X-Telegram-Id` also binds Telegram |
-| POST | `/api/v1/auth/telegram-webapp` | Legacy: link via JWT after Web App (deprecated) |
 | POST | `/api/v1/auth/link-token` | One-time Telegram link token (Bearer JWT) |
 | POST | `/api/v1/users/link-telegram` | Bind Telegram to web user (`token` + `X-Telegram-Id`) |
 | POST | `/api/v1/users/register` | Legacy Telegram-only upsert |

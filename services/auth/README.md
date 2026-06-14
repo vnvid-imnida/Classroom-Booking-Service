@@ -19,3 +19,10 @@ HTTP handlers live in `services/backend/app.py`; bot and web are thin clients.
 - Passwords: **bcrypt** (12 rounds by default, override with `BCRYPT_ROUNDS`).
 - Stored format: `$2b$12$...` (60-char bcrypt string).
 - Web and Telegram bot use the same register/login API — no client-side hashing.
+
+### Brute-force protection (web)
+
+- **Cloudflare Turnstile** on `POST /api/v1/auth/login` and `/register` when `TURNSTILE_SECRET_KEY` is set.
+- Frontend: `VITE_TURNSTILE_SITE_KEY`. Backend verifies token via Cloudflare Siteverify API.
+- Telegram bot requests (`X-Telegram-Id` header) skip captcha.
+- If `TURNSTILE_SECRET_KEY` is empty, captcha is disabled (local dev without keys).

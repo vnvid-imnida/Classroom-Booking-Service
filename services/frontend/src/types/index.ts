@@ -33,12 +33,14 @@ export interface Booking {
 export interface LoginPayload {
   email: string;
   password: string;
+  captchaToken?: string;
 }
 
 export interface RegisterPayload {
   email: string;
   password: string;
   fullName: string;
+  captchaToken?: string;
 }
 
 export interface RoomSearchFilters {

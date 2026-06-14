@@ -1,13 +1,9 @@
 # Uses PEP 8
 # Tools: black, flake8, mypy
 
-import hashlib
-import hmac
-import json
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qsl
 
 import bcrypt
 import jwt
@@ -86,35 +82,3 @@ def new_link_token() -> str:
         URL-safe random token string.
     """
     return secrets.token_urlsafe(32)
-
-
-def validate_telegram_webapp_init_data(init_data: str, bot_token: str) -> dict | None:
-    """Validate Telegram Web App initData HMAC and parse the user payload.
-
-    Args:
-        init_data: Raw initData query string from the Web App.
-        bot_token: Telegram bot token used to derive the secret key.
-
-    Returns:
-        Parsed Telegram user dict on success, otherwise None.
-    """
-    if not init_data or not bot_token:
-        return None
-    try:
-        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
-        received_hash = pairs.pop("hash", None)
-        if not received_hash:
-            return None
-        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
-        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-        calculated = hmac.new(
-            secret_key, data_check_string.encode(), hashlib.sha256
-        ).hexdigest()
-        if not secrets.compare_digest(calculated, received_hash):
-            return None
-        user_raw = pairs.get("user")
-        if not user_raw:
-            return None
-        return json.loads(user_raw)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return None

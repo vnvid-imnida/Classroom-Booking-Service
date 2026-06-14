@@ -139,6 +139,7 @@ class BackendClient:
                 "full_name": full_name,
             },
             auth=False,
+            extra_headers=self._telegram_headers(telegram_username),
         )
         return await self.login(
             normalized, password, telegram_username=telegram_username

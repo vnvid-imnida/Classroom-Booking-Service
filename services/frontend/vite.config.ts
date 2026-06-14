@@ -8,12 +8,10 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
-      // Прокси на api-gateway во время локальной разработки —
-      // позволяет фронту обращаться по /api/* и не упираться в CORS
+      // Локально: /api/* → backend:8083 (без CORS, работает с localhost и LAN IP)
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8083',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },

@@ -6,7 +6,7 @@ ENV PYTHONPATH=/app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/db.py backend/auth_utils.py backend/app.py backend/main.py ./
+COPY backend/db.py backend/auth_utils.py backend/captcha_utils.py backend/app.py backend/main.py ./
 COPY auth ./auth
 
 EXPOSE 8083

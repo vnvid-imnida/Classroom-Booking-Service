@@ -4,6 +4,14 @@
 import sys
 from pathlib import Path
 
+_repo_root = Path(__file__).resolve().parent.parent.parent
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(_repo_root / ".env")
+except ImportError:
+    pass
+
 _services_root = Path(__file__).resolve().parent.parent
 if str(_services_root) not in sys.path:
     sys.path.insert(0, str(_services_root))
@@ -14,12 +22,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import psycopg2
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
 from auth.email_domains import role_for_email, validate_spbstu_email
 from auth.messages import (
+    CAPTCHA_FAILED_RU,
+    CAPTCHA_REQUIRED_RU,
     EMAIL_ALREADY_EXISTS_RU,
     LOGIN_DB_CONFLICT_RU,
     LOGIN_SERVER_ERROR_RU,
@@ -33,9 +43,9 @@ from auth_utils import (
     decode_access_token,
     hash_password,
     new_link_token,
-    validate_telegram_webapp_init_data,
     verify_password,
 )
+from captcha_utils import captcha_enabled, verify_turnstile_token
 from db import execute, fetch_all, fetch_one, get_conn
 
 app = FastAPI(title="spbpu-booking-backend", version="1.0.0")
@@ -60,17 +70,37 @@ def _cors_origins() -> list[str]:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
-    allow_origin_regex=(
-        r"https://.*\.ngrok-free\.app"
-        r"|https://.*\.ngrok-free\.dev"
-        r"|https://.*\.ngrok\.io"
-        r"|https://.*\.ngrok\.app"
-    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+
+def _client_ip(request: Request) -> str | None:
+    """Extract client IP, honoring X-Forwarded-For when present."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
+
+
+def _verify_web_captcha(
+    captcha_token: str | None,
+    remote_ip: str | None,
+    *,
+    x_telegram_id: int | None = None,
+) -> None:
+    """Require Cloudflare Turnstile for browser login/register; skip for Telegram bot."""
+    if not captcha_enabled():
+        return
+    if x_telegram_id is not None:
+        return
+    if not captcha_token:
+        raise HTTPException(400, CAPTCHA_REQUIRED_RU)
+    if not verify_turnstile_token(captcha_token, remote_ip):
+        raise HTTPException(400, CAPTCHA_FAILED_RU)
 
 
 def _parse_dt(value: str) -> datetime:
@@ -169,20 +199,17 @@ class WebRegisterBody(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
     full_name: str = Field(min_length=1, max_length=200)
+    captcha_token: str | None = None
 
 
 class WebLoginBody(BaseModel):
     email: EmailStr
     password: str
+    captcha_token: str | None = None
 
 
 class LinkTelegramBody(BaseModel):
     token: str = Field(min_length=8, max_length=128)
-
-
-class TelegramWebappBody(BaseModel):
-    access_token: str = Field(min_length=10)
-    init_data: str | None = None
 
 
 class BookingRequestCreate(BaseModel):
@@ -260,18 +287,27 @@ def register_user(body: RegisterBody):
 
 
 @app.post("/api/v1/auth/register")
-def web_register(body: WebRegisterBody):
+def web_register(
+    body: WebRegisterBody,
+    request: Request,
+    x_telegram_id: int | None = Header(default=None, alias="X-Telegram-Id"),
+):
     """Register a web user with email and password.
 
     Args:
         body: Email, password, and full name.
+        request: HTTP request (client IP for Turnstile).
+        x_telegram_id: When set (Telegram bot), captcha is not required.
 
     Returns:
         JWT access token and user profile.
 
     Raises:
-        HTTPException: 400 for invalid domain; 409 if email is already registered.
+        HTTPException: 400 for invalid domain or captcha; 409 if email is already registered.
     """
+    _verify_web_captcha(
+        body.captcha_token, _client_ip(request), x_telegram_id=x_telegram_id
+    )
     email = body.email.strip().lower()
     ok, domain_err = validate_spbstu_email(email)
     if not ok:
@@ -504,6 +540,7 @@ def check_email_exists(email: EmailStr = Query(...)):
 @app.post("/api/v1/auth/login")
 def web_login(
     body: WebLoginBody,
+    request: Request,
     x_telegram_id: int | None = Header(default=None, alias="X-Telegram-Id"),
     x_telegram_username: str | None = Header(default=None, alias="X-Telegram-Username"),
 ):
@@ -511,6 +548,7 @@ def web_login(
 
     Args:
         body: Login credentials.
+        request: HTTP request (client IP for Turnstile).
         x_telegram_id: Optional Telegram id to link on successful login.
         x_telegram_username: Optional Telegram username header.
 
@@ -518,8 +556,11 @@ def web_login(
         JWT access token and user profile.
 
     Raises:
-        HTTPException: 400 for invalid email domain; 401/404 for credentials; 409 on link conflicts.
+        HTTPException: 400 for invalid email domain or captcha; 401/404 for credentials; 409 on link conflicts.
     """
+    _verify_web_captcha(
+        body.captcha_token, _client_ip(request), x_telegram_id=x_telegram_id
+    )
     email = body.email.strip().lower()
     ok, domain_err = validate_spbstu_email(email)
     if not ok:
@@ -635,53 +676,6 @@ def create_link_token(user: dict = Depends(get_current_user)):
         "bot_command": f"/start link_{token}",
         "expires_in_minutes": LINK_TOKEN_TTL_MINUTES,
     }
-
-
-@app.post("/api/v1/auth/telegram-webapp")
-def telegram_webapp_link(
-    body: TelegramWebappBody,
-    x_telegram_id: int = Header(alias="X-Telegram-Id"),
-    x_telegram_username: str | None = Header(default=None, alias="X-Telegram-Username"),
-):
-    """Link Telegram to a web account using JWT and optional Web App initData.
-
-    Args:
-        body: Access token and optional Telegram initData for verification.
-        x_telegram_id: Telegram user id header.
-        x_telegram_username: Optional Telegram username header.
-
-    Returns:
-        Updated user profile, optionally with a migration note.
-
-    Raises:
-        HTTPException: 401/409 on invalid token, initData, or link conflicts.
-    """
-    if body.init_data:
-        tg_user = validate_telegram_webapp_init_data(body.init_data, TELEGRAM_BOT_TOKEN)
-        if not tg_user:
-            raise HTTPException(401, "Invalid Telegram initData")
-        init_tg_id = tg_user.get("id")
-        if init_tg_id is None or int(init_tg_id) != x_telegram_id:
-            raise HTTPException(401, "Telegram id in initData does not match X-Telegram-Id")
-
-    user_id = decode_access_token(body.access_token)
-    if not user_id:
-        raise HTTPException(401, "Invalid or expired access token")
-
-    username = x_telegram_username or f"tg_{x_telegram_id}"
-    if not username.startswith("@"):
-        username = f"@{username.lstrip('@')}"
-
-    with get_conn() as conn:
-        updated, migration_note = _bind_telegram_to_web_user(
-            conn,
-            user_id=user_id,
-            x_telegram_id=x_telegram_id,
-            username=username,
-        )
-    if migration_note:
-        return {"user": updated, "migration_note": migration_note}
-    return updated
 
 
 @app.post("/api/v1/users/link-telegram")

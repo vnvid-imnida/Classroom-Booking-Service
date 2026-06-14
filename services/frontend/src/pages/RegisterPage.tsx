@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import type { TurnstileInstance } from '@marsidev/react-turnstile';
 import { useAuth } from '../auth/AuthContext';
 import { getErrorDetail, getErrorStatus } from '../utils/apiError';
 import { REGISTER_EXISTS_WEB_HINT_RU } from '../utils/authMessages';
@@ -17,13 +18,16 @@ import {
   roleLabelForEmail,
   validateSpbstuEmail,
 } from '../utils/emailDomains';
+import TurnstileField, { isTurnstileEnabled } from '../components/TurnstileField';
 
 export default function RegisterPage() {
   const { register, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
+  const turnstileRef = useRef<TurnstileInstance | null>(null);
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const roleHint = roleLabelForEmail(email);
@@ -48,9 +52,13 @@ export default function RegisterPage() {
       setError('Укажите ФИО.');
       return;
     }
+    if (isTurnstileEnabled && !captchaToken) {
+      setError('Подтвердите, что вы не робот.');
+      return;
+    }
     setSubmitting(true);
     try {
-      await register(email, password, fullName.trim());
+      await register(email, password, fullName.trim(), captchaToken ?? undefined);
       navigate('/schedule', { replace: true });
     } catch (err) {
       const status = getErrorStatus(err);
@@ -64,6 +72,8 @@ export default function RegisterPage() {
           detail ?? 'Не удалось зарегистрироваться. Попробуйте позже.',
         );
       }
+      setCaptchaToken(null);
+      turnstileRef.current?.reset();
     } finally {
       setSubmitting(false);
     }
@@ -114,11 +124,20 @@ export default function RegisterPage() {
               fullWidth
               helperText="Минимум 6 символов"
             />
+            <TurnstileField
+              ref={turnstileRef}
+              onSuccess={setCaptchaToken}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => {
+                setCaptchaToken(null);
+                setError('Не удалось загрузить капчу. Обновите страницу.');
+              }}
+            />
             <Button
               type="submit"
               variant="contained"
               size="large"
-              disabled={submitting || isLoading}
+              disabled={submitting || isLoading || (isTurnstileEnabled && !captchaToken)}
             >
               {submitting ? 'Регистрируем...' : 'Зарегистрироваться'}
             </Button>
