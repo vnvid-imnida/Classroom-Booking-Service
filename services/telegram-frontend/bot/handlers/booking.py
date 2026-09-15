@@ -107,10 +107,12 @@ async def pick_building(callback: CallbackQuery, state: FSMContext):
     if not rooms:
         await replace_flow_message(callback, state, "В этом корпусе нет доступных аудиторий.")
         return
+    building_name = rooms[0].get("building_name") or code
+    await state.update_data(building_name=building_name)
     await replace_flow_message(
         callback,
         state,
-        f"Корпус {code}. Выберите аудиторию:",
+        f"{building_name}. Выберите аудиторию:",
         reply_markup=rooms_kb(rooms),
     )
 

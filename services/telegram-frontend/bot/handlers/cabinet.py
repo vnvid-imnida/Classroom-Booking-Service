@@ -80,7 +80,7 @@ async def show_rooms_catalog(callback: CallbackQuery):
         await callback.message.edit_text("Аудитории не найдены.")
         return
 
-    lines = [f"Корпус {code}, аудитории:\n"]
+    lines = [f"{rooms[0].get('building_name') or code}, аудитории:\n"]
     for r in rooms:
         flags = []
         if r.get("has_projector"):

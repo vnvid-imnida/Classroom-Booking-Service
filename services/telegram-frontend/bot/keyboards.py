@@ -44,7 +44,12 @@ def buildings_kb(buildings: list) -> InlineKeyboardMarkup:
         Inline keyboard for building selection.
     """
     rows = [
-        [InlineKeyboardButton(text=f"Корпус {b['code']}", callback_data=f"bld:{b['code']}")]
+        [
+            InlineKeyboardButton(
+                text=b.get("name") or f"Корпус {b['code']}",
+                callback_data=f"bld:{b['code']}",
+            )
+        ]
         for b in buildings
     ]
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
@@ -63,7 +68,7 @@ def rooms_kb(rooms: list, prefix: str = "room") -> InlineKeyboardMarkup:
     """
     rows = []
     for room in rooms[:12]:
-        label = f"{room['building_code']}-{room['room_number']} ({room['capacity']} мест)"
+        label = f"{room.get('building_name') or room['building_code']}-{room['room_number']} ({room['capacity']} мест)"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"{prefix}:{room['id']}")])
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -98,11 +103,14 @@ def purposes_kb(purposes: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+# Пары очной формы по распорядку СПбПУ / РУЗ (1 ч 40 мин, перерыв 20 мин).
 FIXED_TIME_SLOTS = [
-    ("09:00", "11:20"),
-    ("11:30", "13:50"),
-    ("14:00", "16:20"),
-    ("16:30", "18:50"),
+    ("08:00", "09:40"),
+    ("10:00", "11:40"),
+    ("12:00", "13:40"),
+    ("14:00", "15:40"),
+    ("16:00", "17:40"),
+    ("18:00", "19:40"),
 ]
 
 

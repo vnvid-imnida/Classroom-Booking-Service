@@ -3,14 +3,24 @@
 
 import os
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+_env_file = Path(__file__).resolve().parents[2] / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://notification_user:notification_password@postgres:5432/booking",
+    "postgresql://notification_user:notification_password@127.0.0.1:5432/booking",
 )
 
 

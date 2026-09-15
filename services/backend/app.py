@@ -771,7 +771,8 @@ def available_rooms(
         return fetch_all(
             conn,
             f"""
-            SELECT r.id, b.code AS building_code, r.room_number, r.floor, r.capacity
+            SELECT r.id, b.code AS building_code, b.name AS building_name,
+                   r.room_number, r.floor, r.capacity
             FROM rooms r
             JOIN buildings b ON b.id = r.building_id
             WHERE {where}
