@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import {
-  Box, Paper, TextField, Button, Typography, Alert, Stack, Link, Divider,
+  Box, Paper, TextField, Button, Typography, Alert, Stack, Divider,
 } from '@mui/material';
 import { useAuth } from '../auth/AuthContext';
 import { TEST_EMAIL, TEST_PASSWORD, ADMIN_EMAIL, ADMIN_PASSWORD } from '../api/mock';
+import { DOMAIN_ERROR_RU, validateSpbstuEmail } from '../utils/emailDomains';
 
 export default function LoginPage() {
   const { login, isAuthenticated, isLoading } = useAuth();
@@ -23,16 +24,37 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    const domainCheck = validateSpbstuEmail(email);
+    if (!domainCheck.ok) {
+      setError(domainCheck.message);
+      return;
+    }
     setSubmitting(true);
     try {
       await login(email, password);
       navigate('/schedule', { replace: true });
     } catch (err) {
-      const message =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        (err as Error)?.message ||
-        'Не удалось войти. Проверьте email и пароль.';
-      setError(message);
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      if (status === 403) {
+        navigate(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`, {
+          replace: true,
+        });
+        return;
+      }
+      if (status === 400) {
+        setError(typeof detail === 'string' ? detail : DOMAIN_ERROR_RU);
+      } else if (status === 404) {
+        setError('Пользователь с таким email не найден.');
+      } else if (status === 401) {
+        setError(detail || 'Неверный пароль.');
+      } else {
+        setError(
+          detail ||
+            (err as Error)?.message ||
+            'Не удалось войти. Проверьте email и пароль.',
+        );
+      }
     } finally {
       setSubmitting(false);
     }
@@ -48,7 +70,7 @@ export default function LoginPage() {
           Вход в систему
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Введите учётные данные СПбПУ
+          Корпоративный email @spbstu.ru или @edu.spbstu.ru
         </Typography>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -80,9 +102,9 @@ export default function LoginPage() {
             >
               {submitting ? 'Входим...' : 'Войти'}
             </Button>
-            <Link href="#" variant="body2" sx={{ textAlign: 'center' }}>
-              Забыли пароль?
-            </Link>
+            <Typography variant="body2" sx={{ textAlign: 'center' }}>
+              Нет аккаунта? <RouterLink to="/register">Зарегистрироваться</RouterLink>
+            </Typography>
           </Stack>
         </form>
 

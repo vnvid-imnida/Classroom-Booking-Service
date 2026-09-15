@@ -1,7 +1,7 @@
 import { AppBar, Toolbar, Typography, Button, Container, Box, Stack } from '@mui/material';
 import { Link as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { isAdminRole } from '../types';
+import { isAdminRole, ROLE_LABELS } from '../types';
 
 const baseNav = [
   { to: '/schedule', label: 'Расписание' },
@@ -43,7 +43,12 @@ export default function Layout() {
           </Stack>
           {user && (
             <Stack direction="row" spacing={2} alignItems="center">
-              <Typography variant="body2">{user.fullName || user.email}</Typography>
+              <Typography variant="body2">
+                {user.fullName || user.email}
+                {user.role && (
+                  <> · {ROLE_LABELS[user.role] ?? user.role}</>
+                )}
+              </Typography>
               <Button color="inherit" variant="outlined" onClick={logout} sx={{ textTransform: 'none' }}>
                 Выйти
               </Button>

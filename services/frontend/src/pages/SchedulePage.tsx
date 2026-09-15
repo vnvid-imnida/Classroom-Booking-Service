@@ -20,7 +20,7 @@ export default function SchedulePage() {
     queryFn: () => bookingsApi.list(),
   });
 
-  const events = (bookings ?? []).map((b) => ({
+  const events = (Array.isArray(bookings) ? bookings : []).map((b) => ({
     id: b.id,
     title: `${b.roomNumber ? `[${b.roomNumber}] ` : ''}${b.title}`,
     start: b.start,

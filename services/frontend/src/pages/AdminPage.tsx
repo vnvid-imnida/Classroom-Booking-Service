@@ -54,7 +54,7 @@ function BookingsTab() {
 
   const bookingsQuery = useQuery<Booking[]>({
     queryKey: ['admin-bookings'],
-    queryFn: () => bookingsApi.list(),
+    queryFn: () => bookingsApi.list({ admin: true }),
   });
 
   const approveMut = useMutation({

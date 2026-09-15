@@ -16,7 +16,7 @@ export const MOCK_USER: User = {
   id: 'u-demo-1',
   email: TEST_EMAIL,
   fullName: 'Иван Иванович Тестов',
-  role: 'student',
+  role: 'teacher',
 };
 
 export const MOCK_ADMIN: User = {

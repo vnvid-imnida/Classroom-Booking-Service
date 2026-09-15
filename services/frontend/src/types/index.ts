@@ -33,6 +33,30 @@ export interface Booking {
 export interface LoginPayload {
   email: string;
   password: string;
+  captchaToken?: string;
+}
+
+export interface RegisterPayload {
+  email: string;
+  password: string;
+  fullName: string;
+  captchaToken?: string;
+}
+
+export interface RegisterResult {
+  email: string;
+  message: string;
+}
+
+export interface VerifyEmailPayload {
+  email: string;
+  code: string;
+}
+
+export interface RegisterPayload {
+  email: string;
+  password: string;
+  full_name: string;
 }
 
 export interface RoomSearchFilters {
