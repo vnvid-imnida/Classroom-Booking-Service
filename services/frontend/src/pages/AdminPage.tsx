@@ -9,15 +9,10 @@ import {
 import { bookingsApi, roomsApi } from '../api/endpoints';
 import type { Booking, Room, RoomCreatePayload } from '../types';
 import { STATUS_LABELS, STATUS_COLORS } from '../types';
+import { formatMoscowDateTime } from '../utils/dateTime';
 
 function formatDateTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString('ru-RU');
-  } catch {
-    return iso;
-  }
+  return formatMoscowDateTime(iso);
 }
 
 export default function AdminPage() {
@@ -231,7 +226,7 @@ function RoomsTab() {
                 <TableCell>
                   <Stack direction="row" spacing={1}>
                     {r.hasProjector ? <Chip size="small" label="Проектор" /> : null}
-                    {r.hasComputers ? <Chip size="small" label="Компьютеры" /> : null}
+                    {r.hasWhiteboard ? <Chip size="small" label="Доска" /> : null}
                   </Stack>
                 </TableCell>
                 <TableCell align="right">
@@ -284,11 +279,11 @@ function NewRoomDialog({
   const [building, setBuilding] = useState('');
   const [capacity, setCapacity] = useState<number | ''>('');
   const [hasProjector, setHasProjector] = useState(false);
-  const [hasComputers, setHasComputers] = useState(false);
+  const [hasWhiteboard, setHasWhiteboard] = useState(false);
 
   const reset = () => {
     setNumber(''); setBuilding(''); setCapacity('');
-    setHasProjector(false); setHasComputers(false);
+    setHasProjector(false); setHasWhiteboard(false);
   };
 
   const canSubmit = !!number.trim() && !!building.trim() && typeof capacity === 'number' && capacity > 0;
@@ -301,7 +296,7 @@ function NewRoomDialog({
       building: building.trim(),
       capacity: capacity as number,
       hasProjector,
-      hasComputers,
+      hasWhiteboard,
     });
   };
 
@@ -341,8 +336,8 @@ function NewRoomDialog({
               label="Проектор"
             />
             <FormControlLabel
-              control={<Checkbox checked={hasComputers} onChange={(e) => setHasComputers(e.target.checked)} />}
-              label="Компьютеры"
+              control={<Checkbox checked={hasWhiteboard} onChange={(e) => setHasWhiteboard(e.target.checked)} />}
+              label="Доска"
             />
           </Stack>
         </DialogContent>

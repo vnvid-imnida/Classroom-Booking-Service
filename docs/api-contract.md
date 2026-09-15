@@ -136,7 +136,7 @@ Create body:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/moderation/requests` | `PENDING` queue |
+| GET | `/api/v1/moderation/requests` | `scope=queue` (default): `PENDING`; `scope=all`: pending + approved/rejected/cancelled for admin UI |
 | POST | `/api/v1/moderation/requests/{id}/approve` | Approve → create `bookings` row |
 | POST | `/api/v1/moderation/requests/{id}/reject` | Reject with optional `comment` |
 

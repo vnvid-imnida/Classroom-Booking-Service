@@ -5,19 +5,21 @@ import {
   Button, Grid, Card, CardContent, CardActions, Chip, Alert, CircularProgress,
   FormControl, InputLabel, Select, MenuItem,
 } from '@mui/material';
-import { roomsApi } from '../api/endpoints';
+import { buildingsApi, roomsApi } from '../api/endpoints';
 import type { RoomSearchFilters } from '../types';
-
-const buildings = ['Главный', '2-й', '3-й', '4-й', 'Гидрокорпус'];
 
 export default function SearchPage() {
   const [filters, setFilters] = useState<RoomSearchFilters>({});
-  const [active, setActive] = useState<RoomSearchFilters | null>(null);
+  const [active, setActive] = useState<RoomSearchFilters>({});
+
+  const buildingsQuery = useQuery({
+    queryKey: ['buildings'],
+    queryFn: () => buildingsApi.list(),
+  });
 
   const { data: rooms, isFetching, isError } = useQuery({
     queryKey: ['rooms', active],
-    queryFn: () => roomsApi.search(active ?? {}),
-    enabled: active !== null,
+    queryFn: () => roomsApi.search(active),
   });
 
   const handleSearch = () => setActive({ ...filters });
@@ -31,7 +33,7 @@ export default function SearchPage() {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Stack spacing={2}>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-            <FormControl sx={{ minWidth: 200 }}>
+            <FormControl sx={{ minWidth: 220 }}>
               <InputLabel id="building-label">Корпус</InputLabel>
               <Select
                 labelId="building-label"
@@ -45,8 +47,10 @@ export default function SearchPage() {
                 }
               >
                 <MenuItem value="any">Любой</MenuItem>
-                {buildings.map((b) => (
-                  <MenuItem key={b} value={b}>{b}</MenuItem>
+                {(buildingsQuery.data ?? []).map((b) => (
+                  <MenuItem key={b.code} value={b.code}>
+                    {b.name}
+                  </MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -66,6 +70,7 @@ export default function SearchPage() {
               InputLabelProps={{ shrink: true }}
               value={filters.date ?? ''}
               onChange={(e) => setFilters({ ...filters, date: e.target.value || undefined })}
+              helperText="Фильтр по слоту — на следующем шаге"
             />
             <TextField
               type="time"
@@ -84,28 +89,46 @@ export default function SearchPage() {
           </Stack>
           <Stack direction="row" spacing={3} alignItems="center" flexWrap="wrap">
             <FormControlLabel
-              control={<Checkbox
-                checked={!!filters.hasProjector}
-                onChange={(e) => setFilters({ ...filters, hasProjector: e.target.checked || undefined })}
-              />}
+              control={
+                <Checkbox
+                  checked={!!filters.hasProjector}
+                  onChange={(e) =>
+                    setFilters({ ...filters, hasProjector: e.target.checked || undefined })
+                  }
+                />
+              }
               label="Проектор"
             />
             <FormControlLabel
-              control={<Checkbox
-                checked={!!filters.hasComputers}
-                onChange={(e) => setFilters({ ...filters, hasComputers: e.target.checked || undefined })}
-              />}
-              label="Компьютеры"
+              control={
+                <Checkbox
+                  checked={!!filters.hasWhiteboard}
+                  onChange={(e) =>
+                    setFilters({ ...filters, hasWhiteboard: e.target.checked || undefined })
+                  }
+                />
+              }
+              label="Доска"
             />
             <Box sx={{ flexGrow: 1 }} />
-            <Button variant="contained" onClick={handleSearch}>Найти</Button>
+            <Button variant="contained" onClick={handleSearch} disabled={isFetching}>
+              Найти
+            </Button>
           </Stack>
         </Stack>
       </Paper>
 
-      {isError && <Alert severity="warning" sx={{ mb: 2 }}>
-        Не удалось получить список аудиторий.
-      </Alert>}
+      {buildingsQuery.isError && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Не удалось загрузить список корпусов.
+        </Alert>
+      )}
+
+      {isError && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Не удалось получить список аудиторий. Проверьте вход и что backend запущен.
+        </Alert>
+      )}
 
       {isFetching && (
         <Box display="flex" justifyContent="center" py={4}>
@@ -113,15 +136,13 @@ export default function SearchPage() {
         </Box>
       )}
 
-      {active && !isFetching && (
+      {!isFetching && !isError && (
         <Grid container spacing={2}>
           {(rooms ?? []).map((room) => (
             <Grid item xs={12} sm={6} md={4} key={room.id}>
               <Card>
                 <CardContent>
-                  <Typography variant="h6">
-                    Ауд. {room.number}
-                  </Typography>
+                  <Typography variant="h6">Ауд. {room.number}</Typography>
                   <Typography variant="body2" color="text.secondary">
                     Корпус: {room.building}
                   </Typography>
@@ -130,11 +151,13 @@ export default function SearchPage() {
                   </Typography>
                   <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
                     {room.hasProjector && <Chip size="small" label="Проектор" />}
-                    {room.hasComputers && <Chip size="small" label="Компьютеры" />}
+                    {room.hasWhiteboard && <Chip size="small" label="Доска" />}
                   </Stack>
                 </CardContent>
                 <CardActions>
-                  <Button size="small" variant="outlined">Забронировать</Button>
+                  <Button size="small" variant="outlined" disabled>
+                    Забронировать
+                  </Button>
                 </CardActions>
               </Card>
             </Grid>

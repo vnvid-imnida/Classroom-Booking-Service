@@ -11,9 +11,14 @@ export interface Room {
   id: string;
   number: string;
   building: string;
+  /** Building code for API filters (e.g. ГЗ, 3). */
+  buildingCode?: string;
   capacity: number;
   hasProjector: boolean;
-  hasComputers: boolean;
+  hasWhiteboard: boolean;
+  isAccessible?: boolean;
+  /** @deprecated use hasWhiteboard — kept for older UI bits */
+  hasComputers?: boolean;
 }
 
 export type BookingStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
@@ -60,10 +65,11 @@ export interface RegisterPayload {
 }
 
 export interface RoomSearchFilters {
+  /** Building code from API (`ГЗ`, `3`), not display name. */
   building?: string;
   minCapacity?: number;
   hasProjector?: boolean;
-  hasComputers?: boolean;
+  hasWhiteboard?: boolean;
   date?: string;
   fromTime?: string;
   toTime?: string;

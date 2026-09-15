@@ -2,10 +2,17 @@
 # Tools: black, flake8, mypy
 
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from bot.api.client import BackendClient
+
+# Academic day / RUZ pairs are wall-clock times in Saint Petersburg (UTC+3, no DST).
+try:
+    MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+except ZoneInfoNotFoundError:
+    MOSCOW_TZ = timezone(timedelta(hours=3))
 
 
 CB_AUTH_REGISTER = "auth:register"
@@ -227,11 +234,21 @@ def _parse_api_dt(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def format_moscow_dt(value: str | None) -> str:
+    """Format API UTC datetime as Moscow wall-clock ``YYYY-MM-DD HH:MM``."""
+    if not value:
+        return "—"
+    dt = _parse_api_dt(str(value))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(MOSCOW_TZ).strftime("%Y-%m-%d %H:%M")
+
+
 def _slot_range(date_str: str, start_hm: str, end_hm: str) -> tuple[datetime, datetime]:
-    """Build UTC datetime range for a fixed slot on a calendar day."""
-    start = datetime.fromisoformat(f"{date_str}T{start_hm}:00").replace(tzinfo=timezone.utc)
-    end = datetime.fromisoformat(f"{date_str}T{end_hm}:00").replace(tzinfo=timezone.utc)
-    return start, end
+    """Build UTC datetime range for a Moscow wall-clock slot on a calendar day."""
+    start_local = datetime.fromisoformat(f"{date_str}T{start_hm}:00").replace(tzinfo=MOSCOW_TZ)
+    end_local = datetime.fromisoformat(f"{date_str}T{end_hm}:00").replace(tzinfo=MOSCOW_TZ)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
 def _ranges_overlap(start1: datetime, end1: datetime, start2: datetime, end2: datetime) -> bool:

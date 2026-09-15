@@ -19,6 +19,7 @@ from bot.keyboards import (
     booking_actions_kb,
     buildings_kb,
     date_kb,
+    format_moscow_dt,
     my_requests_nav_kb,
     request_actions_kb,
     rooms_kb,
@@ -43,10 +44,8 @@ STATUS_RU = {
 
 
 def _fmt_dt(value: str) -> str:
-    """Format API datetime for display in messages."""
-    if not value:
-        return "—"
-    return str(value).replace("T", " ")[:16]
+    """Format API datetime for display in messages (Moscow time)."""
+    return format_moscow_dt(value)
 
 
 @router.message(F.text == "🔍 Аудитории")

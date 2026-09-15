@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Link as RouterLink, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import {
-  Box, Paper, TextField, Button, Typography, Alert, Stack, Divider,
+  Box, Paper, TextField, Button, Typography, Alert, Stack,
 } from '@mui/material';
 import { useAuth } from '../auth/AuthContext';
-import { TEST_EMAIL, TEST_PASSWORD, ADMIN_EMAIL, ADMIN_PASSWORD } from '../api/mock';
 import { DOMAIN_ERROR_RU, validateSpbstuEmail } from '../utils/emailDomains';
+import { getErrorDetail } from '../utils/apiError';
 
 export default function LoginPage() {
   const { login, isAuthenticated, isLoading } = useAuth();
@@ -50,18 +50,14 @@ export default function LoginPage() {
         setError(detail || 'Неверный пароль.');
       } else {
         setError(
-          detail ||
-            (err as Error)?.message ||
-            'Не удалось войти. Проверьте email и пароль.',
+          getErrorDetail(err) ||
+            'Не удалось войти. Проверьте email, пароль и что backend запущен.',
         );
       }
     } finally {
       setSubmitting(false);
     }
   };
-
-  const useUser  = () => { setEmail(TEST_EMAIL);  setPassword(TEST_PASSWORD);  setError(null); };
-  const useAdmin = () => { setEmail(ADMIN_EMAIL); setPassword(ADMIN_PASSWORD); setError(null); };
 
   return (
     <Box display="flex" justifyContent="center" alignItems="center" minHeight="70vh">
@@ -107,23 +103,6 @@ export default function LoginPage() {
             </Typography>
           </Stack>
         </form>
-
-        <Divider sx={{ my: 3 }}>Демо-режим</Divider>
-        <Alert
-          severity="info"
-          action={
-            <Stack direction="row" spacing={1}>
-              <Button color="inherit" size="small" onClick={useUser}>Студент</Button>
-              <Button color="inherit" size="small" onClick={useAdmin}>Админ</Button>
-            </Stack>
-          }
-        >
-          Для просмотра без backend:
-          <br />
-          <strong>{TEST_EMAIL}</strong> / <strong>{TEST_PASSWORD}</strong>
-          <br />
-          <strong>{ADMIN_EMAIL}</strong> / <strong>{ADMIN_PASSWORD}</strong>
-        </Alert>
       </Paper>
     </Box>
   );

@@ -1288,13 +1288,26 @@ def _require_moderator(user: dict) -> None:
 
 
 @app.get("/api/v1/moderation/requests")
-def moderation_queue(user: dict = Depends(get_current_user)):
-    """List pending booking requests for moderators."""
+def moderation_queue(
+    user: dict = Depends(get_current_user),
+    scope: Literal["queue", "all"] = Query(
+        "queue",
+        description="queue = PENDING only; all = submitted requests for admin panel",
+    ),
+):
+    """List booking requests for moderators (pending queue or full history)."""
     _require_moderator(user)
+    if scope == "all":
+        status_filter = "br.status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED')"
+        order_by = "br.submitted_at DESC NULLS LAST, br.created_at DESC"
+    else:
+        status_filter = "br.status = 'PENDING'"
+        order_by = "br.submitted_at ASC"
+
     with get_conn() as conn:
         return fetch_all(
             conn,
-            """
+            f"""
             SELECT br.id::text, br.title, br.starts_at, br.ends_at, br.status,
                    u.full_name AS requester_name, u.email AS requester_email,
                    u.telegram_username,
@@ -1305,8 +1318,9 @@ def moderation_queue(user: dict = Depends(get_current_user)):
             JOIN rooms r ON r.id = br.room_id
             JOIN buildings b ON b.id = r.building_id
             JOIN event_purposes ep ON ep.id = br.purpose_id
-            WHERE br.status = 'PENDING'
-            ORDER BY br.submitted_at ASC
+            WHERE {status_filter}
+            ORDER BY {order_by}
+            LIMIT 100
             """,
         )
 

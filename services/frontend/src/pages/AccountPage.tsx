@@ -7,6 +7,7 @@ import { useAuth } from '../auth/AuthContext';
 import { bookingsApi } from '../api/endpoints';
 import type { Booking } from '../types';
 import { STATUS_LABELS, STATUS_COLORS, ROLE_LABELS } from '../types';
+import { formatMoscowRange } from '../utils/dateTime';
 
 function getInitials(user: { fullName?: string; email: string }): string {
   const source = (user.fullName && user.fullName.trim()) || user.email || '?';
@@ -17,14 +18,7 @@ function getInitials(user: { fullName?: string; email: string }): string {
 }
 
 function formatRange(start: string, end: string): string {
-  try {
-    const s = new Date(start);
-    const e = new Date(end);
-    if (isNaN(s.getTime()) || isNaN(e.getTime())) return `${start} — ${end}`;
-    return `${s.toLocaleString('ru-RU')} — ${e.toLocaleString('ru-RU')}`;
-  } catch {
-    return `${start} — ${end}`;
-  }
+  return formatMoscowRange(start, end);
 }
 
 export default function AccountPage() {
