@@ -47,8 +47,7 @@ export default defineConfig({
     strictPort: true,
     allowedHosts: NGROK_ALLOWED_HOSTS,
     proxy: {
-      // Прокси на api-gateway во время локальной разработки —
-      // позволяет фронту обращаться по /api/* и не упираться в CORS
+      // Локально: /api/* → backend:8083 (без CORS, работает с localhost и LAN IP)
       '/api': {
         target: 'http://127.0.0.1:8083',
         changeOrigin: true,

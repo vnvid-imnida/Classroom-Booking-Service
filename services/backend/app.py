@@ -1,27 +1,62 @@
 # Uses PEP 8
 # Tools: black, flake8, mypy
 
+import sys
+from pathlib import Path
+
+_repo_root = Path(__file__).resolve().parent.parent.parent
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(_repo_root / ".env")
+except ImportError:
+    pass
+
+_services_root = Path(__file__).resolve().parent.parent
+if str(_services_root) not in sys.path:
+    sys.path.insert(0, str(_services_root))
+
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+import psycopg2
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
 
+from auth.email_domains import role_for_email, validate_spbstu_email
+from auth.messages import (
+    CAPTCHA_FAILED_RU,
+    CAPTCHA_REQUIRED_RU,
+    EMAIL_ALREADY_EXISTS_RU,
+    EMAIL_NOT_VERIFIED_RU,
+    INVALID_VERIFICATION_CODE_RU,
+    LOGIN_DB_CONFLICT_RU,
+    LOGIN_SERVER_ERROR_RU,
+    TELEGRAM_LINKED_OTHER_ACCOUNT_RU,
+    VERIFICATION_CODE_SENT_RU,
+    WEB_LINKED_OTHER_TELEGRAM_RU,
+)
+from auth.roles import ROLE_TEACHER, effective_role
 from auth_utils import (
     LINK_TOKEN_TTL_MINUTES,
     create_access_token,
     decode_access_token,
     hash_password,
     new_link_token,
-    validate_telegram_webapp_init_data,
     verify_password,
 )
+from captcha_utils import captcha_enabled, verify_turnstile_token
 from db import execute, fetch_all, fetch_one, get_conn
+from email_utils import EmailSendError, send_verification_email
+from email_verification import issue_verification_code, verify_stored_code
 
 app = FastAPI(title="spbpu-booking-backend", version="1.0.0")
 SERVICE_NAME = os.getenv("SERVICE_NAME", "backend")
+logger = logging.getLogger(__name__)
 
 
 def _cors_origins() -> list[str]:
@@ -51,7 +86,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+
+def _client_ip(request: Request) -> str | None:
+    """Extract client IP, honoring X-Forwarded-For when present."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
+
+
+def _verify_web_captcha(
+    captcha_token: str | None,
+    remote_ip: str | None,
+    *,
+    x_telegram_id: int | None = None,
+) -> None:
+    """Require Cloudflare Turnstile for browser login/register; skip for Telegram bot."""
+    if not captcha_enabled():
+        return
+    if x_telegram_id is not None:
+        return
+    if not captcha_token:
+        raise HTTPException(400, CAPTCHA_REQUIRED_RU)
+    if not verify_turnstile_token(captcha_token, remote_ip):
+        raise HTTPException(400, CAPTCHA_FAILED_RU)
 
 
 def _parse_dt(value: str) -> datetime:
@@ -84,7 +145,7 @@ def _user_row_to_dict(row: dict) -> dict:
         "telegram_username": row.get("telegram_username"),
         "email": row.get("email"),
         "full_name": row["full_name"],
-        "role": row["role"],
+        "role": effective_role(row),
         "is_active": row["is_active"],
     }
 
@@ -150,6 +211,7 @@ class WebRegisterBody(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
     full_name: str = Field(min_length=1, max_length=200)
+    captcha_token: str | None = None
 
 
 class WebLoginBody(BaseModel):
@@ -157,13 +219,13 @@ class WebLoginBody(BaseModel):
     password: str
 
 
+class VerifyEmailBody(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
 class LinkTelegramBody(BaseModel):
     token: str = Field(min_length=8, max_length=128)
-
-
-class TelegramWebappBody(BaseModel):
-    access_token: str = Field(min_length=10)
-    init_data: str | None = None
 
 
 class BookingRequestCreate(BaseModel):
@@ -221,13 +283,13 @@ def register_user(body: RegisterBody):
             conn,
             """
             INSERT INTO users (telegram_id, telegram_username, full_name, role, is_active)
-            VALUES (%s, %s, %s, 'TEACHER', true)
+            VALUES (%s, %s, %s, %s, true)
             ON CONFLICT (telegram_id) DO UPDATE
             SET telegram_username = EXCLUDED.telegram_username,
                 full_name = EXCLUDED.full_name,
                 is_active = true
             """,
-            (body.telegram_id, username, body.full_name),
+            (body.telegram_id, username, body.full_name, ROLE_TEACHER),
         )
         user = fetch_one(
             conn,
@@ -241,37 +303,134 @@ def register_user(body: RegisterBody):
 
 
 @app.post("/api/v1/auth/register")
-def web_register(body: WebRegisterBody):
+def web_register(
+    body: WebRegisterBody,
+    request: Request,
+    x_telegram_id: int | None = Header(default=None, alias="X-Telegram-Id"),
+):
     """Register a web user with email and password.
+
+    Returns **202** and emails a verification code (no JWT until verified).
+    ``X-Telegram-Id`` only skips captcha — email verification is still required.
 
     Args:
         body: Email, password, and full name.
+        request: HTTP request (client IP for Turnstile).
+        x_telegram_id: When set (Telegram bot), captcha is not required.
+
+    Returns:
+        202 with verification instructions.
+
+    Raises:
+        HTTPException: 400 for invalid domain or captcha; 409 if email is already registered.
+    """
+    _verify_web_captcha(
+        body.captcha_token, _client_ip(request), x_telegram_id=x_telegram_id
+    )
+    email = body.email.strip().lower()
+    ok, domain_err = validate_spbstu_email(email)
+    if not ok:
+        raise HTTPException(400, domain_err or "Invalid email domain")
+
+    with get_conn() as conn:
+        existing = fetch_one(
+            conn,
+            """
+            SELECT id::text, email_verified
+            FROM users WHERE lower(email) = %s
+            """,
+            (email,),
+        )
+        if existing:
+            if existing.get("email_verified"):
+                raise HTTPException(409, EMAIL_ALREADY_EXISTS_RU)
+            code = issue_verification_code(conn, existing["id"])
+            try:
+                send_verification_email(
+                    to_email=email, code=code, full_name=body.full_name
+                )
+            except EmailSendError as exc:
+                raise HTTPException(503, str(exc)) from exc
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "message": VERIFICATION_CODE_SENT_RU,
+                    "email": email,
+                    "verification_required": True,
+                },
+            )
+
+        user_role = role_for_email(email)
+        user = fetch_one(
+            conn,
+            """
+            INSERT INTO users (email, password_hash, full_name, role, is_active, email_verified)
+            VALUES (%s, %s, %s, %s, true, false)
+            RETURNING id::text, email, full_name, role, telegram_id
+            """,
+            (
+                email,
+                hash_password(body.password),
+                body.full_name,
+                user_role,
+            ),
+        )
+
+        code = issue_verification_code(conn, user["id"])
+        try:
+            send_verification_email(to_email=email, code=code, full_name=body.full_name)
+        except EmailSendError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "message": VERIFICATION_CODE_SENT_RU,
+            "email": email,
+            "verification_required": True,
+        },
+    )
+
+
+@app.post("/api/v1/auth/verify-email")
+def verify_email(body: VerifyEmailBody):
+    """Confirm email with a 6-digit code and issue JWT.
+
+    Args:
+        body: Registered email and verification code.
 
     Returns:
         JWT access token and user profile.
 
     Raises:
-        HTTPException: 409 if email is already registered.
+        HTTPException: 400 for invalid code; 404 if user not found.
     """
     email = body.email.strip().lower()
-    with get_conn() as conn:
-        existing = fetch_one(
-            conn,
-            "SELECT id::text FROM users WHERE lower(email) = %s",
-            (email,),
-        )
-        if existing:
-            raise HTTPException(409, "Email already registered")
+    ok, domain_err = validate_spbstu_email(email)
+    if not ok:
+        raise HTTPException(400, domain_err or "Invalid email domain")
 
+    with get_conn() as conn:
         user = fetch_one(
             conn,
             """
-            INSERT INTO users (email, password_hash, full_name, role, is_active)
-            VALUES (%s, %s, %s, 'TEACHER', true)
-            RETURNING id::text, email, full_name, role, telegram_id
+            SELECT id::text, email, full_name, role, telegram_id, email_verified
+            FROM users WHERE lower(email) = %s AND is_active = true
             """,
-            (email, hash_password(body.password), body.full_name),
+            (email,),
         )
+        if not user:
+            raise HTTPException(404, "Пользователь с таким email не найден")
+        if user.get("email_verified"):
+            token = create_access_token(user["id"])
+            return {"access_token": token, "token_type": "bearer", "user": user}
+
+        valid, err = verify_stored_code(conn, user["id"], body.code)
+        if not valid:
+            raise HTTPException(400, err or INVALID_VERIFICATION_CODE_RU)
+
+        user["email_verified"] = True
+
     token = create_access_token(user["id"])
     return {"access_token": token, "token_type": "bearer", "user": user}
 
@@ -345,7 +504,42 @@ def _release_telegram_from_other_user(
             (other["id"],),
         )
         return True
-    raise HTTPException(409, "This Telegram account is already linked to another user")
+    raise HTTPException(409, TELEGRAM_LINKED_OTHER_ACCOUNT_RU)
+
+
+def _release_username_from_other_user(
+    conn,
+    *,
+    username: str,
+    target_user_id: str,
+) -> None:
+    """Clear duplicate ``telegram_username`` on other rows before binding.
+
+    Raises:
+        HTTPException: 409 when another web account already uses this username.
+    """
+    other = fetch_one(
+        conn,
+        """
+        SELECT id::text, email FROM users
+        WHERE telegram_username = %s AND is_active = true AND id != %s::uuid
+        """,
+        (username, target_user_id),
+    )
+    if not other:
+        return
+    if _is_legacy_telegram_only_user(other):
+        execute(
+            conn,
+            """
+            UPDATE users
+            SET telegram_username = NULL
+            WHERE id = %s::uuid
+            """,
+            (other["id"],),
+        )
+        return
+    raise HTTPException(409, TELEGRAM_LINKED_OTHER_ACCOUNT_RU)
 
 
 _LEGACY_TELEGRAM_REASSIGNED_NOTE = (
@@ -378,6 +572,9 @@ def _bind_telegram_to_web_user(
     legacy_reassigned = _release_telegram_from_other_user(
         conn, x_telegram_id=x_telegram_id, target_user_id=user_id
     )
+    _release_username_from_other_user(
+        conn, username=username, target_user_id=user_id
+    )
 
     user = fetch_one(
         conn,
@@ -392,9 +589,7 @@ def _bind_telegram_to_web_user(
 
     existing_tg = user.get("telegram_id")
     if existing_tg and int(existing_tg) != x_telegram_id:
-        raise HTTPException(
-            409, "Web account is already linked to a different Telegram account"
-        )
+        raise HTTPException(409, WEB_LINKED_OTHER_TELEGRAM_RU)
 
     execute(
         conn,
@@ -430,18 +625,30 @@ def check_email_exists(email: EmailStr = Query(...)):
         Dict with ``exists`` boolean.
     """
     normalized = str(email).strip().lower()
+    ok, domain_err = validate_spbstu_email(normalized)
+    if not ok:
+        raise HTTPException(400, domain_err or "Invalid email domain")
     with get_conn() as conn:
         row = fetch_one(
             conn,
-            "SELECT id::text FROM users WHERE lower(email) = %s AND is_active = true",
+            """
+            SELECT id::text, email_verified
+            FROM users WHERE lower(email) = %s AND is_active = true
+            """,
             (normalized,),
         )
-    return {"exists": row is not None}
+    if not row:
+        return {"exists": False, "email_verified": False}
+    return {
+        "exists": True,
+        "email_verified": bool(row.get("email_verified")),
+    }
 
 
 @app.post("/api/v1/auth/login")
 def web_login(
     body: WebLoginBody,
+    request: Request,
     x_telegram_id: int | None = Header(default=None, alias="X-Telegram-Id"),
     x_telegram_username: str | None = Header(default=None, alias="X-Telegram-Username"),
 ):
@@ -449,6 +656,7 @@ def web_login(
 
     Args:
         body: Login credentials.
+        request: HTTP request (client IP for Turnstile).
         x_telegram_id: Optional Telegram id to link on successful login.
         x_telegram_username: Optional Telegram username header.
 
@@ -456,32 +664,73 @@ def web_login(
         JWT access token and user profile.
 
     Raises:
-        HTTPException: 401 for invalid credentials; 409 on Telegram link conflicts.
+        HTTPException: 400 for invalid email domain; 401/403/404 for credentials; 409 on link conflicts.
     """
     email = body.email.strip().lower()
-    with get_conn() as conn:
-        user = fetch_one(
-            conn,
-            """
-            SELECT id::text, email, password_hash, full_name, role, telegram_id, is_active
-            FROM users WHERE lower(email) = %s
-            """,
-            (email,),
-        )
-        if not user or not user.get("is_active"):
-            raise HTTPException(401, "Invalid email or password")
-        if not user.get("password_hash") or not verify_password(
-            body.password, user["password_hash"]
-        ):
-            raise HTTPException(401, "Invalid email or password")
-
-        if x_telegram_id is not None:
-            user, _ = _bind_telegram_to_web_user(
+    ok, domain_err = validate_spbstu_email(email)
+    if not ok:
+        raise HTTPException(400, domain_err or "Invalid email domain")
+    try:
+        with get_conn() as conn:
+            user = fetch_one(
                 conn,
-                user_id=user["id"],
-                x_telegram_id=x_telegram_id,
-                username=_telegram_username_header(x_telegram_username, x_telegram_id),
+                """
+                SELECT id::text, email, password_hash, full_name, role, telegram_id,
+                       is_active, email_verified
+                FROM users WHERE lower(email) = %s
+                """,
+                (email,),
             )
+            if not user or not user.get("is_active"):
+                raise HTTPException(404, "Пользователь с таким email не найден")
+            if not user.get("password_hash"):
+                raise HTTPException(404, "Пользователь с таким email не найден")
+            if not verify_password(body.password, user["password_hash"]):
+                raise HTTPException(401, "Неверный пароль")
+            if not user.get("email_verified", True):
+                raise HTTPException(403, EMAIL_NOT_VERIFIED_RU)
+
+            expected_role = effective_role(user)
+            if user.get("role") != expected_role:
+                execute(
+                    conn,
+                    "UPDATE users SET role = %s WHERE id = %s::uuid",
+                    (expected_role, user["id"]),
+                )
+                user["role"] = expected_role
+
+            # Commit role updates before Telegram bind. A 409 on bind used to
+            # raise HTTPException and roll back the whole transaction.
+            conn.commit()
+
+            if x_telegram_id is not None:
+                user, _ = _bind_telegram_to_web_user(
+                    conn,
+                    user_id=user["id"],
+                    x_telegram_id=x_telegram_id,
+                    username=_telegram_username_header(
+                        x_telegram_username, x_telegram_id
+                    ),
+                )
+    except HTTPException:
+        raise
+    except psycopg2.IntegrityError as exc:
+        logger.warning("login integrity error: %s", exc)
+        raise HTTPException(409, LOGIN_DB_CONFLICT_RU) from exc
+    except psycopg2.Error as exc:
+        logger.exception("login database error")
+        err = str(exc).lower()
+        if "users_role_check" in err or "student" in err:
+            raise HTTPException(
+                500,
+                "Ошибка БД: примените миграцию database/migrations/008_add_student_role.sql",
+            ) from exc
+        if "password_hash" in err or ("column" in err and "email" in err):
+            raise HTTPException(
+                500,
+                "Ошибка БД: примените миграцию database/migrations/005_user_auth_telegram_link.sql",
+            ) from exc
+        raise HTTPException(500, LOGIN_SERVER_ERROR_RU) from exc
 
     token = create_access_token(user["id"])
     return {
@@ -491,7 +740,7 @@ def web_login(
             "id": user["id"],
             "email": user["email"],
             "full_name": user["full_name"],
-            "role": user["role"],
+            "role": effective_role(user),
             "telegram_id": user.get("telegram_id"),
         },
     }
@@ -535,53 +784,6 @@ def create_link_token(user: dict = Depends(get_current_user)):
         "bot_command": f"/start link_{token}",
         "expires_in_minutes": LINK_TOKEN_TTL_MINUTES,
     }
-
-
-@app.post("/api/v1/auth/telegram-webapp")
-def telegram_webapp_link(
-    body: TelegramWebappBody,
-    x_telegram_id: int = Header(alias="X-Telegram-Id"),
-    x_telegram_username: str | None = Header(default=None, alias="X-Telegram-Username"),
-):
-    """Link Telegram to a web account using JWT and optional Web App initData.
-
-    Args:
-        body: Access token and optional Telegram initData for verification.
-        x_telegram_id: Telegram user id header.
-        x_telegram_username: Optional Telegram username header.
-
-    Returns:
-        Updated user profile, optionally with a migration note.
-
-    Raises:
-        HTTPException: 401/409 on invalid token, initData, or link conflicts.
-    """
-    if body.init_data:
-        tg_user = validate_telegram_webapp_init_data(body.init_data, TELEGRAM_BOT_TOKEN)
-        if not tg_user:
-            raise HTTPException(401, "Invalid Telegram initData")
-        init_tg_id = tg_user.get("id")
-        if init_tg_id is None or int(init_tg_id) != x_telegram_id:
-            raise HTTPException(401, "Telegram id in initData does not match X-Telegram-Id")
-
-    user_id = decode_access_token(body.access_token)
-    if not user_id:
-        raise HTTPException(401, "Invalid or expired access token")
-
-    username = x_telegram_username or f"tg_{x_telegram_id}"
-    if not username.startswith("@"):
-        username = f"@{username.lstrip('@')}"
-
-    with get_conn() as conn:
-        updated, migration_note = _bind_telegram_to_web_user(
-            conn,
-            user_id=user_id,
-            x_telegram_id=x_telegram_id,
-            username=username,
-        )
-    if migration_note:
-        return {"user": updated, "migration_note": migration_note}
-    return updated
 
 
 @app.post("/api/v1/users/link-telegram")

@@ -1,17 +1,73 @@
-# Shared auth helpers for backend and Telegram bot.
+# Shared auth package for backend, Telegram bot, and frontend (TS mirror).
 
 from auth.email_domains import (
     ALLOWED_EMAIL_DOMAINS,
     DOMAIN_ERROR_RU,
     is_allowed_spbstu_email,
     normalize_email,
+    role_for_email,
     validate_spbstu_email,
+)
+from auth.messages import (
+    ALLOWED_DOMAINS_HINT_RU,
+    EMAIL_ALREADY_EXISTS_RU,
+    EMAIL_NOT_FOUND_RU,
+    INVALID_EMAIL_RU,
+    LOGIN_EMAIL_PROMPT_RU,
+    PASSWORD_PROMPT_RU,
+    REGISTER_EMAIL_PROMPT_RU,
+    REGISTER_EXISTS_BOT_HINT_RU,
+    REGISTER_EXISTS_WEB_HINT_RU,
+    REGISTER_PASSWORD_MIN_RU,
+)
+from auth.paths import (
+    AUTH_CHECK_EMAIL,
+    AUTH_LOGIN,
+    AUTH_REGISTER,
+    AUTH_TELEGRAM_LOGOUT,
+    ME,
+    USERS_LINK_TELEGRAM,
+)
+from auth.roles import (
+    ROLE_ADMIN,
+    ROLE_LABEL_RU,
+    ROLE_MODERATOR,
+    ROLE_STUDENT,
+    ROLE_SYSTEM,
+    ROLE_TEACHER,
+    effective_role,
+    role_label_ru_for_email,
 )
 
 __all__ = [
     "ALLOWED_EMAIL_DOMAINS",
+    "ALLOWED_DOMAINS_HINT_RU",
+    "AUTH_CHECK_EMAIL",
+    "AUTH_LOGIN",
+    "AUTH_REGISTER",
+    "AUTH_TELEGRAM_LOGOUT",
     "DOMAIN_ERROR_RU",
+    "EMAIL_ALREADY_EXISTS_RU",
+    "EMAIL_NOT_FOUND_RU",
+    "INVALID_EMAIL_RU",
+    "LOGIN_EMAIL_PROMPT_RU",
+    "ME",
+    "PASSWORD_PROMPT_RU",
+    "REGISTER_EMAIL_PROMPT_RU",
+    "REGISTER_EXISTS_BOT_HINT_RU",
+    "REGISTER_EXISTS_WEB_HINT_RU",
+    "REGISTER_PASSWORD_MIN_RU",
+    "ROLE_ADMIN",
+    "ROLE_LABEL_RU",
+    "ROLE_MODERATOR",
+    "ROLE_STUDENT",
+    "ROLE_SYSTEM",
+    "ROLE_TEACHER",
+    "USERS_LINK_TELEGRAM",
+    "effective_role",
     "is_allowed_spbstu_email",
     "normalize_email",
+    "role_for_email",
+    "role_label_ru_for_email",
     "validate_spbstu_email",
 ]

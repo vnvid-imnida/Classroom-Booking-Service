@@ -1,15 +1,21 @@
-/** FastAPI returns `detail` (string or array); some clients use `message`. */
-export function getApiErrorMessage(err: unknown, fallback: string): string {
-  const data = (err as { response?: { data?: Record<string, unknown> } })?.response?.data;
-  if (!data) {
-    return (err as Error)?.message || fallback;
+import axios from 'axios';
+
+/** Extract FastAPI ``detail`` from an axios or unknown error. */
+export function getErrorDetail(err: unknown): string | undefined {
+  if (axios.isAxiosError(err)) {
+    const detail = err.response?.data?.detail;
+    return typeof detail === 'string' ? detail : undefined;
   }
-  const detail = data.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail) && detail.length > 0) {
-    const first = detail[0] as { msg?: string };
-    if (typeof first?.msg === 'string') return first.msg;
+  if (err instanceof Error && err.message) {
+    return err.message;
   }
-  if (typeof data.message === 'string') return data.message;
-  return fallback;
+  return undefined;
+}
+
+/** HTTP status from an axios error, if present. */
+export function getErrorStatus(err: unknown): number | undefined {
+  if (axios.isAxiosError(err)) {
+    return err.response?.status;
+  }
+  return undefined;
 }

@@ -6,7 +6,7 @@
 ALLOWED_EMAIL_DOMAINS: tuple[str, ...] = ("spbstu.ru", "edu.spbstu.ru")
 
 DOMAIN_ERROR_RU = (
-    "Регистрация доступна только для корпоративной почты "
+    "Регистрация и вход доступны только для почты "
     "@spbstu.ru или @edu.spbstu.ru"
 )
 
@@ -31,6 +31,20 @@ def is_allowed_spbstu_email(email: str) -> bool:
     """Return True when the email domain is an allowed SPbPU domain."""
     domain = email_domain(email)
     return domain in ALLOWED_EMAIL_DOMAINS if domain else False
+
+
+def role_for_email(email: str) -> str:
+    """Map corporate email domain to DB role constant.
+
+    Call only after ``validate_spbstu_email`` succeeds.
+
+    Returns:
+        ``STUDENT`` for ``@edu.spbstu.ru``, ``TEACHER`` for ``@spbstu.ru``.
+    """
+    domain = email_domain(email)
+    if domain == "edu.spbstu.ru":
+        return "STUDENT"
+    return "TEACHER"
 
 
 def validate_spbstu_email(email: str) -> tuple[bool, str | None]:

@@ -1,39 +1,79 @@
-import { useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { useRef, useState } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
-  Box, Paper, TextField, Button, Typography, Alert, Stack,
+  Alert,
+  Box,
+  Button,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
 } from '@mui/material';
+import type { TurnstileInstance } from '@marsidev/react-turnstile';
 import { useAuth } from '../auth/AuthContext';
-import { getApiErrorMessage } from '../utils/apiError';
+import { getErrorDetail, getErrorStatus } from '../utils/apiError';
+import { REGISTER_EXISTS_WEB_HINT_RU } from '../utils/authMessages';
+import {
+  DOMAIN_ERROR_RU,
+  roleLabelForEmail,
+  validateSpbstuEmail,
+} from '../utils/emailDomains';
+import TurnstileField, { isTurnstileEnabled } from '../components/TurnstileField';
 
 export default function RegisterPage() {
   const { register, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
+  const turnstileRef = useRef<TurnstileInstance | null>(null);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [password, setPassword] = useState('');
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  if (isLoading) {
-    return null;
-  }
+  const roleHint = roleLabelForEmail(email);
 
   if (isAuthenticated) {
-    const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/schedule';
-    return <Navigate to={from} replace />;
+    return <Navigate to="/schedule" replace />;
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    const domainCheck = validateSpbstuEmail(email);
+    if (!domainCheck.ok) {
+      setError(domainCheck.message);
+      return;
+    }
+    if (password.length < 6) {
+      setError('Пароль должен быть не короче 6 символов.');
+      return;
+    }
+    if (!fullName.trim()) {
+      setError('Укажите ФИО.');
+      return;
+    }
+    if (isTurnstileEnabled && !captchaToken) {
+      setError('Подтвердите, что вы не робот.');
+      return;
+    }
     setSubmitting(true);
     try {
-      await register(email, password, fullName);
-      navigate('/schedule', { replace: true });
+      const result = await register(email, password, fullName.trim(), captchaToken ?? undefined);
+      navigate(`/verify-email?email=${encodeURIComponent(result.email)}`, { replace: true });
     } catch (err) {
-      setError(getApiErrorMessage(err, 'Не удалось зарегистрироваться. Проверьте данные.'));
+      const status = getErrorStatus(err);
+      const detail = getErrorDetail(err);
+      if (status === 409) {
+        setError(detail ?? REGISTER_EXISTS_WEB_HINT_RU);
+      } else if (status === 400) {
+        setError(detail ?? DOMAIN_ERROR_RU);
+      } else {
+        setError(
+          detail ?? 'Не удалось зарегистрироваться. Попробуйте позже.',
+        );
+      }
+      setCaptchaToken(null);
+      turnstileRef.current?.reset();
     } finally {
       setSubmitting(false);
     }
@@ -46,7 +86,7 @@ export default function RegisterPage() {
           Регистрация
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Учётная запись для бронирования аудиторий СПбПУ. После регистрации войдите в Telegram-боте: /login
+          {DOMAIN_ERROR_RU}
         </Typography>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -54,18 +94,24 @@ export default function RegisterPage() {
         <form onSubmit={handleSubmit}>
           <Stack spacing={2}>
             <TextField
-              label="ФИО"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
-              autoFocus
-              fullWidth
-            />
-            <TextField
               label="Email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@spbstu.ru"
+              required
+              autoFocus
+              fullWidth
+              helperText={
+                roleHint
+                  ? `Роль: ${roleHint} (@edu.spbstu.ru — студент, @spbstu.ru — преподаватель)`
+                  : 'Только @spbstu.ru и @edu.spbstu.ru'
+              }
+            />
+            <TextField
+              label="ФИО"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
               required
               fullWidth
             />
@@ -75,15 +121,23 @@ export default function RegisterPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              helperText="Минимум 6 символов"
-              inputProps={{ minLength: 6 }}
               fullWidth
+              helperText="Минимум 6 символов"
+            />
+            <TurnstileField
+              ref={turnstileRef}
+              onSuccess={setCaptchaToken}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => {
+                setCaptchaToken(null);
+                setError('Не удалось загрузить капчу. Обновите страницу.');
+              }}
             />
             <Button
               type="submit"
               variant="contained"
               size="large"
-              disabled={submitting || isLoading}
+              disabled={submitting || isLoading || (isTurnstileEnabled && !captchaToken)}
             >
               {submitting ? 'Регистрируем...' : 'Зарегистрироваться'}
             </Button>

@@ -7,6 +7,10 @@ import os
 import sys
 from pathlib import Path
 
+_services_root = Path(__file__).resolve().parent.parent
+if str(_services_root) not in sys.path:
+    sys.path.insert(0, str(_services_root))
+
 _env_file = Path(__file__).resolve().parents[2] / ".env"
 if _env_file.exists():
     for line in _env_file.read_text(encoding="utf-8").splitlines():

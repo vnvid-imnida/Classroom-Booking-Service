@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 
 from bot.api.client import BackendClient, BackendError
 from bot.handlers.common import _needs_web_auth, _start_unlinked_login
-from bot.states import BotLogin
+from bot.states import BotLogin, BotRegister
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,15 @@ async def _in_bot_login_wizard(state: FSMContext | None) -> bool:
     if state is None:
         return False
     current = await state.get_state()
-    return current in (BotLogin.email.state, BotLogin.password.state)
+    return current in (
+        BotLogin.email.state,
+        BotLogin.password.state,
+        BotLogin.verification_code.state,
+        BotRegister.email.state,
+        BotRegister.full_name.state,
+        BotRegister.password.state,
+        BotRegister.verification_code.state,
+    )
 
 
 class AuthMiddleware(BaseMiddleware):

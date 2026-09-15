@@ -8,6 +8,25 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 from bot.api.client import BackendClient
 
 
+CB_AUTH_REGISTER = "auth:register"
+
+
+def register_inline_kb() -> InlineKeyboardMarkup:
+    """Inline button to start in-bot registration (login + unknown email flows)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Зарегистрироваться",
+                    callback_data=CB_AUTH_REGISTER,
+                )
+            ],
+        ]
+    )
+
+
+
+
 def main_menu(is_moderator: bool = False) -> ReplyKeyboardMarkup:
     """Build the main reply keyboard; adds moderation row for moderators.
 

@@ -112,11 +112,9 @@ services:
     restart: unless-stopped
 
   backend:
-    profiles:
-      - docker-backend
     build:
-      context: ./services/backend
-      dockerfile: Dockerfile
+      context: ./services
+      dockerfile: backend/Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,6 +131,13 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me-in-production}
       LINK_TOKEN_TTL_MINUTES: ${LINK_TOKEN_TTL_MINUTES:-30}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-true}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
     networks:
       - spbpu-booking-network
     restart: unless-stopped
@@ -174,14 +179,14 @@ services:
       retries: 3
 
   telegram:
-    profiles:
-      - docker-telegram
     build:
-      context: ./services/telegram-frontend
-      dockerfile: Dockerfile
+      context: ./services
+      dockerfile: telegram-frontend/Dockerfile
     env_file:
       - .env
     depends_on:
+      backend:
+        condition: service_started
       notification-service:
         condition: service_started
     ports:
@@ -189,11 +194,10 @@ services:
     environment:
       SERVICE_NAME: telegram-frontend
       SERVICE_PORT: 8090
-      # Backend на хосте (python main.py в services/backend). В Docker Desktop Windows/Mac:
-      BACKEND_URL: ${BACKEND_URL:-http://host.docker.internal:8083}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      BACKEND_URL: http://backend:8083
       NOTIFICATION_SERVICE_URL: http://notification-service:8084
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
     networks:
       - spbpu-booking-network
     restart: unless-stopped

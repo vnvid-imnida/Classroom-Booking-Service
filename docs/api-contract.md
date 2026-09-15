@@ -1,6 +1,9 @@
-# REST API contract (backend ↔ telegram-frontend)
+# REST API contract (backend ↔ clients)
 
 Base URL: `BACKEND_URL` (default `http://backend:8083`).
+
+**Unified auth:** business rules in `services/auth/`; HTTP handlers in `services/backend/app.py`.
+Web (`services/frontend`) and Telegram bot (`services/telegram-frontend`) call the same `/api/v1/auth/*` endpoints.
 
 Auth (choose one):
 
@@ -15,9 +18,9 @@ Web UI: React SPA at `services/frontend` (`/register`, `/login`). Bot login: `/l
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/auth/register` | Web signup (`email`, `password`, `full_name`) → JWT |
-| POST | `/api/v1/auth/login` | Web login → JWT; with `X-Telegram-Id` also binds Telegram |
-| POST | `/api/v1/auth/telegram-webapp` | Legacy: link via JWT after Web App (deprecated) |
+| POST | `/api/v1/auth/register` | Signup → **202** + email code (web & bot; JWT only after verify) |
+| POST | `/api/v1/auth/verify-email` | Confirm email with 6-digit code → JWT |
+| POST | `/api/v1/auth/login` | Web login → JWT; **403** if email not verified |
 | POST | `/api/v1/auth/link-token` | One-time Telegram link token (Bearer JWT) |
 | POST | `/api/v1/users/link-telegram` | Bind Telegram to web user (`token` + `X-Telegram-Id`) |
 | POST | `/api/v1/users/register` | Legacy Telegram-only upsert |
@@ -25,8 +28,17 @@ Web UI: React SPA at `services/frontend` (`/register`, `/login`). Bot login: `/l
 
 Web register/login body:
 ```json
-{ "email": "teacher@example.com", "password": "secret12", "full_name": "Иван Иванов" }
+{ "email": "teacher@spbstu.ru", "password": "secret12", "full_name": "Иван Иванов" }
 ```
+
+Email domain: only `@spbstu.ru` and `@edu.spbstu.ru` (validated in `services/auth/email_domains.py` and `POST /api/v1/auth/register`).
+
+Login errors:
+- `404` — user not found (`"Пользователь с таким email не найден"`)
+- `401` — wrong password (`"Неверный пароль"`)
+- `403` — email not verified
+- `409` — email already registered (register): `"Пользователь с таким email уже зарегистрирован."`
+- `400` — invalid email domain (register)
 
 Link token response:
 ```json
