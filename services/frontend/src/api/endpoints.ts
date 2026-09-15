@@ -3,10 +3,12 @@ import type {
   Booking,
   LoginPayload,
   RegisterPayload,
+  RegisterResult,
   Room,
   RoomCreatePayload,
   RoomSearchFilters,
   User,
+  VerifyEmailPayload,
 } from '../types';
 import { roleForEmail } from '../utils/emailDomains';
 import {
@@ -137,17 +139,29 @@ export const authApi = {
       .post<BackendAuthResponse>('/api/v1/auth/login', {
         email: payload.email.trim().toLowerCase(),
         password: payload.password,
-        captcha_token: payload.captchaToken,
       })
       .then((r) => mapAuthResponse(r.data));
   },
   register: (payload: RegisterPayload) =>
     apiClient
-      .post<BackendAuthResponse>('/api/v1/auth/register', {
+      .post<RegisterResult & { verification_required?: boolean }>(
+        '/api/v1/auth/register',
+        {
+          email: payload.email.trim().toLowerCase(),
+          password: payload.password,
+          full_name: payload.fullName,
+          captcha_token: payload.captchaToken,
+        },
+      )
+      .then((r) => ({
+        email: r.data.email,
+        message: r.data.message,
+      })),
+  verifyEmail: (payload: VerifyEmailPayload) =>
+    apiClient
+      .post<BackendAuthResponse>('/api/v1/auth/verify-email', {
         email: payload.email.trim().toLowerCase(),
-        password: payload.password,
-        full_name: payload.fullName,
-        captcha_token: payload.captchaToken,
+        code: payload.code,
       })
       .then((r) => mapAuthResponse(r.data)),
   me: () => {

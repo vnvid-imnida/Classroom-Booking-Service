@@ -22,7 +22,15 @@ HTTP handlers live in `services/backend/app.py`; bot and web are thin clients.
 
 ### Brute-force protection (web)
 
-- **Cloudflare Turnstile** on `POST /api/v1/auth/login` and `/register` when `TURNSTILE_SECRET_KEY` is set.
+- **Cloudflare Turnstile** on `POST /api/v1/auth/register` when `TURNSTILE_SECRET_KEY` is set.
 - Frontend: `VITE_TURNSTILE_SITE_KEY`. Backend verifies token via Cloudflare Siteverify API.
 - Telegram bot requests (`X-Telegram-Id` header) skip captcha.
 - If `TURNSTILE_SECRET_KEY` is empty, captcha is disabled (local dev without keys).
+
+### Email verification (web)
+
+- After `POST /api/v1/auth/register` the API returns **202** (no JWT) and sends a 6-digit code.
+- `POST /api/v1/auth/verify-email` with `{ email, code }` confirms the mailbox and returns JWT.
+- `POST /api/v1/auth/login` returns **403** until `email_verified` is true.
+- Local dev: set `EMAIL_ENABLED=false` — the code is logged by the backend.
+- Telegram bot registration (`X-Telegram-Id`) skips email verification (MVP).

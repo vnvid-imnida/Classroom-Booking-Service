@@ -24,6 +24,7 @@ from typing import Literal
 import psycopg2
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
 
 from auth.email_domains import role_for_email, validate_spbstu_email
@@ -31,9 +32,12 @@ from auth.messages import (
     CAPTCHA_FAILED_RU,
     CAPTCHA_REQUIRED_RU,
     EMAIL_ALREADY_EXISTS_RU,
+    EMAIL_NOT_VERIFIED_RU,
+    INVALID_VERIFICATION_CODE_RU,
     LOGIN_DB_CONFLICT_RU,
     LOGIN_SERVER_ERROR_RU,
     TELEGRAM_LINKED_OTHER_ACCOUNT_RU,
+    VERIFICATION_CODE_SENT_RU,
     WEB_LINKED_OTHER_TELEGRAM_RU,
 )
 from auth.roles import ROLE_TEACHER, effective_role
@@ -47,6 +51,8 @@ from auth_utils import (
 )
 from captcha_utils import captcha_enabled, verify_turnstile_token
 from db import execute, fetch_all, fetch_one, get_conn
+from email_utils import EmailSendError, send_verification_email
+from email_verification import issue_verification_code, verify_stored_code
 
 app = FastAPI(title="spbpu-booking-backend", version="1.0.0")
 SERVICE_NAME = os.getenv("SERVICE_NAME", "backend")
@@ -205,7 +211,11 @@ class WebRegisterBody(BaseModel):
 class WebLoginBody(BaseModel):
     email: EmailStr
     password: str
-    captcha_token: str | None = None
+
+
+class VerifyEmailBody(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
 class LinkTelegramBody(BaseModel):
@@ -294,13 +304,16 @@ def web_register(
 ):
     """Register a web user with email and password.
 
+    Web clients receive a verification code by email (no JWT until verified).
+    Telegram bot requests skip email verification and return JWT immediately.
+
     Args:
         body: Email, password, and full name.
         request: HTTP request (client IP for Turnstile).
         x_telegram_id: When set (Telegram bot), captcha is not required.
 
     Returns:
-        JWT access token and user profile.
+        202 with verification instructions (web), or JWT (Telegram bot).
 
     Raises:
         HTTPException: 400 for invalid domain or captcha; 409 if email is already registered.
@@ -312,25 +325,119 @@ def web_register(
     ok, domain_err = validate_spbstu_email(email)
     if not ok:
         raise HTTPException(400, domain_err or "Invalid email domain")
+
+    bot_register = x_telegram_id is not None
+
     with get_conn() as conn:
         existing = fetch_one(
             conn,
-            "SELECT id::text FROM users WHERE lower(email) = %s",
+            """
+            SELECT id::text, email_verified
+            FROM users WHERE lower(email) = %s
+            """,
             (email,),
         )
         if existing:
-            raise HTTPException(409, EMAIL_ALREADY_EXISTS_RU)
+            if existing.get("email_verified"):
+                raise HTTPException(409, EMAIL_ALREADY_EXISTS_RU)
+            if bot_register:
+                raise HTTPException(
+                    409,
+                    "Email зарегистрирован, но не подтверждён. "
+                    "Подтвердите почту на сайте или дождитесь нового кода.",
+                )
+            code = issue_verification_code(conn, existing["id"])
+            try:
+                send_verification_email(
+                    to_email=email, code=code, full_name=body.full_name
+                )
+            except EmailSendError as exc:
+                raise HTTPException(503, str(exc)) from exc
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "message": VERIFICATION_CODE_SENT_RU,
+                    "email": email,
+                    "verification_required": True,
+                },
+            )
 
         user_role = role_for_email(email)
         user = fetch_one(
             conn,
             """
-            INSERT INTO users (email, password_hash, full_name, role, is_active)
-            VALUES (%s, %s, %s, %s, true)
+            INSERT INTO users (email, password_hash, full_name, role, is_active, email_verified)
+            VALUES (%s, %s, %s, %s, true, %s)
             RETURNING id::text, email, full_name, role, telegram_id
             """,
-            (email, hash_password(body.password), body.full_name, user_role),
+            (
+                email,
+                hash_password(body.password),
+                body.full_name,
+                user_role,
+                bot_register,
+            ),
         )
+
+        if bot_register:
+            token = create_access_token(user["id"])
+            return {"access_token": token, "token_type": "bearer", "user": user}
+
+        code = issue_verification_code(conn, user["id"])
+        try:
+            send_verification_email(to_email=email, code=code, full_name=body.full_name)
+        except EmailSendError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "message": VERIFICATION_CODE_SENT_RU,
+            "email": email,
+            "verification_required": True,
+        },
+    )
+
+
+@app.post("/api/v1/auth/verify-email")
+def verify_email(body: VerifyEmailBody):
+    """Confirm email with a 6-digit code and issue JWT.
+
+    Args:
+        body: Registered email and verification code.
+
+    Returns:
+        JWT access token and user profile.
+
+    Raises:
+        HTTPException: 400 for invalid code; 404 if user not found.
+    """
+    email = body.email.strip().lower()
+    ok, domain_err = validate_spbstu_email(email)
+    if not ok:
+        raise HTTPException(400, domain_err or "Invalid email domain")
+
+    with get_conn() as conn:
+        user = fetch_one(
+            conn,
+            """
+            SELECT id::text, email, full_name, role, telegram_id, email_verified
+            FROM users WHERE lower(email) = %s AND is_active = true
+            """,
+            (email,),
+        )
+        if not user:
+            raise HTTPException(404, "Пользователь с таким email не найден")
+        if user.get("email_verified"):
+            token = create_access_token(user["id"])
+            return {"access_token": token, "token_type": "bearer", "user": user}
+
+        valid, err = verify_stored_code(conn, user["id"], body.code)
+        if not valid:
+            raise HTTPException(400, err or INVALID_VERIFICATION_CODE_RU)
+
+        user["email_verified"] = True
+
     token = create_access_token(user["id"])
     return {"access_token": token, "token_type": "bearer", "user": user}
 
@@ -556,11 +663,8 @@ def web_login(
         JWT access token and user profile.
 
     Raises:
-        HTTPException: 400 for invalid email domain or captcha; 401/404 for credentials; 409 on link conflicts.
+        HTTPException: 400 for invalid email domain; 401/403/404 for credentials; 409 on link conflicts.
     """
-    _verify_web_captcha(
-        body.captcha_token, _client_ip(request), x_telegram_id=x_telegram_id
-    )
     email = body.email.strip().lower()
     ok, domain_err = validate_spbstu_email(email)
     if not ok:
@@ -570,7 +674,8 @@ def web_login(
             user = fetch_one(
                 conn,
                 """
-                SELECT id::text, email, password_hash, full_name, role, telegram_id, is_active
+                SELECT id::text, email, password_hash, full_name, role, telegram_id,
+                       is_active, email_verified
                 FROM users WHERE lower(email) = %s
                 """,
                 (email,),
@@ -581,6 +686,8 @@ def web_login(
                 raise HTTPException(404, "Пользователь с таким email не найден")
             if not verify_password(body.password, user["password_hash"]):
                 raise HTTPException(401, "Неверный пароль")
+            if not user.get("email_verified", True):
+                raise HTTPException(403, EMAIL_NOT_VERIFIED_RU)
 
             expected_role = effective_role(user)
             if user.get("role") != expected_role:

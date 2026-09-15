@@ -18,8 +18,9 @@ Web UI: React SPA at `services/frontend` (`/register`, `/login`). Bot login: `/l
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/auth/register` | Web signup (`email`, `password`, `full_name`) → JWT |
-| POST | `/api/v1/auth/login` | Web login → JWT; with `X-Telegram-Id` also binds Telegram |
+| POST | `/api/v1/auth/register` | Web signup → **202** + verification code by email (JWT after verify) |
+| POST | `/api/v1/auth/verify-email` | Confirm email with 6-digit code → JWT |
+| POST | `/api/v1/auth/login` | Web login → JWT; **403** if email not verified |
 | POST | `/api/v1/auth/link-token` | One-time Telegram link token (Bearer JWT) |
 | POST | `/api/v1/users/link-telegram` | Bind Telegram to web user (`token` + `X-Telegram-Id`) |
 | POST | `/api/v1/users/register` | Legacy Telegram-only upsert |
@@ -35,6 +36,7 @@ Email domain: only `@spbstu.ru` and `@edu.spbstu.ru` (validated in `services/aut
 Login errors:
 - `404` — user not found (`"Пользователь с таким email не найден"`)
 - `401` — wrong password (`"Неверный пароль"`)
+- `403` — email not verified
 - `409` — email already registered (register): `"Пользователь с таким email уже зарегистрирован."`
 - `400` — invalid email domain (register)
 

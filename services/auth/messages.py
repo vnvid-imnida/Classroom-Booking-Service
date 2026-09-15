@@ -40,6 +40,13 @@ LOGIN_DB_CONFLICT_RU = (
 )
 CAPTCHA_REQUIRED_RU = "Подтвердите, что вы не робот."
 CAPTCHA_FAILED_RU = "Проверка капчи не пройдена. Обновите страницу и попробуйте снова."
+EMAIL_NOT_VERIFIED_RU = (
+    "Подтвердите email — введите код из письма на странице подтверждения."
+)
+VERIFICATION_CODE_SENT_RU = (
+    "Код подтверждения отправлен на email. Введите его для завершения регистрации."
+)
+INVALID_VERIFICATION_CODE_RU = "Неверный или просроченный код подтверждения."
 
 __all__ = [
     "DOMAIN_ERROR_RU",

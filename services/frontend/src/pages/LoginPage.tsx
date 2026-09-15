@@ -1,22 +1,18 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link as RouterLink, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import {
   Box, Paper, TextField, Button, Typography, Alert, Stack, Divider,
 } from '@mui/material';
-import type { TurnstileInstance } from '@marsidev/react-turnstile';
 import { useAuth } from '../auth/AuthContext';
 import { TEST_EMAIL, TEST_PASSWORD, ADMIN_EMAIL, ADMIN_PASSWORD } from '../api/mock';
 import { DOMAIN_ERROR_RU, validateSpbstuEmail } from '../utils/emailDomains';
-import TurnstileField, { isTurnstileEnabled } from '../components/TurnstileField';
 
 export default function LoginPage() {
   const { login, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const turnstileRef = useRef<TurnstileInstance | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -33,17 +29,19 @@ export default function LoginPage() {
       setError(domainCheck.message);
       return;
     }
-    if (isTurnstileEnabled && !captchaToken) {
-      setError('Подтвердите, что вы не робот.');
-      return;
-    }
     setSubmitting(true);
     try {
-      await login(email, password, captchaToken ?? undefined);
+      await login(email, password);
       navigate('/schedule', { replace: true });
     } catch (err) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      if (status === 403) {
+        navigate(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`, {
+          replace: true,
+        });
+        return;
+      }
       if (status === 400) {
         setError(typeof detail === 'string' ? detail : DOMAIN_ERROR_RU);
       } else if (status === 404) {
@@ -57,8 +55,6 @@ export default function LoginPage() {
             'Не удалось войти. Проверьте email и пароль.',
         );
       }
-      setCaptchaToken(null);
-      turnstileRef.current?.reset();
     } finally {
       setSubmitting(false);
     }
@@ -98,20 +94,11 @@ export default function LoginPage() {
               required
               fullWidth
             />
-            <TurnstileField
-              ref={turnstileRef}
-              onSuccess={setCaptchaToken}
-              onExpire={() => setCaptchaToken(null)}
-              onError={() => {
-                setCaptchaToken(null);
-                setError('Не удалось загрузить капчу. Обновите страницу.');
-              }}
-            />
             <Button
               type="submit"
               variant="contained"
               size="large"
-              disabled={submitting || isLoading || (isTurnstileEnabled && !captchaToken)}
+              disabled={submitting || isLoading}
             >
               {submitting ? 'Входим...' : 'Войти'}
             </Button>

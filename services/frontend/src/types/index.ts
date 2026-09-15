@@ -43,6 +43,16 @@ export interface RegisterPayload {
   captchaToken?: string;
 }
 
+export interface RegisterResult {
+  email: string;
+  message: string;
+}
+
+export interface VerifyEmailPayload {
+  email: string;
+  code: string;
+}
+
 export interface RoomSearchFilters {
   building?: string;
   minCapacity?: number;

@@ -4,6 +4,7 @@
 """REST paths for unified web + Telegram auth (implemented in services/backend)."""
 
 AUTH_REGISTER = "/api/v1/auth/register"
+AUTH_VERIFY_EMAIL = "/api/v1/auth/verify-email"
 AUTH_LOGIN = "/api/v1/auth/login"
 AUTH_CHECK_EMAIL = "/api/v1/auth/check-email"
 AUTH_TELEGRAM_LOGOUT = "/api/v1/auth/telegram-logout"

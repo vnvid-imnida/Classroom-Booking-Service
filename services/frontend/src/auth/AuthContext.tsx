@@ -13,7 +13,8 @@ interface AuthContextValue {
     password: string,
     fullName: string,
     captchaToken?: string,
-  ) => Promise<void>;
+  ) => Promise<{ email: string; message: string }>;
+  verifyEmail: (email: string, code: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -51,12 +52,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fullName: string,
     captchaToken?: string,
   ) => {
-    const { token, user } = await authApi.register({
+    return authApi.register({
       email,
       password,
       fullName,
       captchaToken,
     });
+  };
+
+  const verifyEmail = async (email: string, code: string) => {
+    const { token, user } = await authApi.verifyEmail({ email, code });
     localStorage.setItem('auth_token', token);
     setUser(user);
   };
@@ -73,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       login,
       register,
+      verifyEmail,
       logout,
     }),
     [user, isLoading],

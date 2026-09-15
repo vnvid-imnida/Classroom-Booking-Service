@@ -58,8 +58,8 @@ export default function RegisterPage() {
     }
     setSubmitting(true);
     try {
-      await register(email, password, fullName.trim(), captchaToken ?? undefined);
-      navigate('/schedule', { replace: true });
+      const result = await register(email, password, fullName.trim(), captchaToken ?? undefined);
+      navigate(`/verify-email?email=${encodeURIComponent(result.email)}`, { replace: true });
     } catch (err) {
       const status = getErrorStatus(err);
       const detail = getErrorDetail(err);
