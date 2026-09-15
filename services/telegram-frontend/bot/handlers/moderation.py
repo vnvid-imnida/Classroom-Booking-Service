@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.api.client import BackendError
 from bot.handlers.common import client_from, client_from_callback
-from bot.keyboards import moderation_kb
+from bot.keyboards import PURPOSE_LABELS, moderation_kb
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -17,6 +17,31 @@ router = Router()
 def _fmt_dt(value: str) -> str:
     """Format API datetime for moderator messages."""
     return str(value).replace("T", " ")[:16] if value else "—"
+
+
+def _requester_line(item: dict) -> str:
+    """Build «От:» line without showing literal None."""
+    name = (item.get("requester_name") or "").strip() or "Без имени"
+    tg = (item.get("telegram_username") or "").strip()
+    email = (item.get("requester_email") or "").strip()
+    if tg:
+        contact = tg if tg.startswith("@") else f"@{tg}"
+    elif email:
+        contact = email
+    else:
+        contact = "—"
+    return f"От: {name} ({contact})"
+
+
+def _purpose_label(item: dict) -> str:
+    """Prefer Russian label by code; fall back to API name."""
+    code = (item.get("purpose_code") or "").strip().upper()
+    if code in PURPOSE_LABELS:
+        return PURPOSE_LABELS[code]
+    name = (item.get("purpose_name") or "").strip()
+    if name and set(name) != {"?"}:
+        return name
+    return code or "—"
 
 
 @router.message(F.text == "✅ Модерация")
@@ -36,9 +61,9 @@ async def moderation_menu(message: Message):
     for item in queue[:10]:
         text = (
             f"Заявка: {item.get('title')}\n"
-            f"От: {item.get('requester_name')} ({item.get('telegram_username')})\n"
+            f"{_requester_line(item)}\n"
             f"Аудитория: {item.get('building_code')}-{item.get('room_number')}\n"
-            f"Цель: {item.get('purpose_name')}\n"
+            f"Цель: {_purpose_label(item)}\n"
             f"Время: {_fmt_dt(item.get('starts_at'))} — {_fmt_dt(item.get('ends_at'))}"
         )
         await message.answer(text, reply_markup=moderation_kb(item["id"]))

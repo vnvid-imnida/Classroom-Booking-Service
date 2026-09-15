@@ -137,10 +137,13 @@ async def my_requests(message: Message):
     client = client_from(message)
     try:
         active = await client.my_requests("active")
-        archive = await client.my_requests("archive")
     except BackendError as exc:
         await message.answer(f"Ошибка: {exc}")
         return
+    try:
+        archive = await client.my_requests("archive")
+    except BackendError:
+        archive = []
     if not active and not archive:
         await message.answer("У вас пока нет заявок.")
         return

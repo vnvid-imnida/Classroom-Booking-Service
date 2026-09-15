@@ -1296,8 +1296,10 @@ def moderation_queue(user: dict = Depends(get_current_user)):
             conn,
             """
             SELECT br.id::text, br.title, br.starts_at, br.ends_at, br.status,
-                   u.full_name AS requester_name, u.telegram_username,
-                   b.code AS building_code, r.room_number, ep.name AS purpose_name
+                   u.full_name AS requester_name, u.email AS requester_email,
+                   u.telegram_username,
+                   b.code AS building_code, r.room_number,
+                   ep.code AS purpose_code, ep.name AS purpose_name
             FROM booking_requests br
             JOIN users u ON u.id = br.requester_id
             JOIN rooms r ON r.id = br.room_id
