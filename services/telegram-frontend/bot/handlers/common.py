@@ -19,11 +19,13 @@ from auth.email_domains import DOMAIN_ERROR_RU, normalize_email, validate_spbstu
 from auth.messages import (
     ALLOWED_DOMAINS_HINT_RU,
     EMAIL_NOT_FOUND_RU,
+    EMAIL_NOT_VERIFIED_RU,
     LOGIN_EMAIL_PROMPT_RU,
     PASSWORD_PROMPT_RU,
     REGISTER_EMAIL_PROMPT_RU,
     REGISTER_EXISTS_BOT_HINT_RU,
     REGISTER_PASSWORD_MIN_RU,
+    VERIFICATION_CODE_SENT_RU,
 )
 from bot.api.client import BackendClient, BackendError
 from bot.keyboards import CB_AUTH_REGISTER, main_menu, register_inline_kb
@@ -412,6 +414,15 @@ async def bot_login_password(message: Message, state: FSMContext):
             )
             await state.set_state(BotLogin.email)
             return
+        if exc.status_code == 403:
+            await state.update_data(password=password, email=email)
+            await message.answer(
+                (detail or EMAIL_NOT_VERIFIED_RU)
+                + "\n\nВведите 6-значный код из письма:",
+                **ANSWER_KW,
+            )
+            await state.set_state(BotLogin.verification_code)
+            return
         if exc.status_code == 409:
             try:
                 me = await api.me()
@@ -514,7 +525,7 @@ async def bot_register_full_name(message: Message, state: FSMContext):
 
 @router.message(BotRegister.password, ~F.text.startswith("/"))
 async def bot_register_password(message: Message, state: FSMContext):
-    """Submit registration and log in on success."""
+    """Submit registration; ask for email verification code when required."""
     password = message.text or ""
     await try_delete_user_message(message)
     if len(password) < 6:
@@ -534,7 +545,7 @@ async def bot_register_password(message: Message, state: FSMContext):
     user = message.from_user
     api = client_from(message)
     try:
-        auth = await api.register(
+        result = await api.register(
             email,
             password,
             full_name,
@@ -552,10 +563,37 @@ async def bot_register_password(message: Message, state: FSMContext):
             await message.answer(REGISTER_EXISTS_BOT_HINT_RU, **ANSWER_KW)
             await state.set_state(BotRegister.email)
             return
+        if exc.status_code == 503:
+            await message.answer(
+                f"Не удалось отправить код на email: {exc}",
+                **ANSWER_KW,
+            )
+            return
         await message.answer(f"Не удалось зарегистрироваться: {exc}", **ANSWER_KW)
         return
 
+    if result.get("verification_required"):
+        await state.update_data(password=password, email=normalize_email(email))
+        await message.answer(
+            (result.get("message") or VERIFICATION_CODE_SENT_RU)
+            + f"\n\nEmail: {normalize_email(email)}\n"
+            "Введите 6-значный код из письма:",
+            **ANSWER_KW,
+        )
+        await state.set_state(BotRegister.verification_code)
+        return
+
+    # Unexpected JWT-style response — bind Telegram via login
     await state.clear()
+    try:
+        auth = await api.login(
+            email,
+            password,
+            telegram_username=user.username and f"@{user.username}" or None,
+        )
+    except BackendError as exc:
+        await message.answer(f"Аккаунт создан, но вход не удался: {exc}", **ANSWER_KW)
+        return
     me = auth.get("user")
     if not me:
         try:
@@ -567,6 +605,108 @@ async def bot_register_password(message: Message, state: FSMContext):
     await _show_main_menu(message, me)
 
 
+async def _finish_auth_after_verify(
+    message: Message,
+    state: FSMContext,
+    *,
+    email: str,
+    password: str,
+) -> None:
+    """After email verify: login to bind Telegram and show the main menu."""
+    user = message.from_user
+    api = client_from(message)
+    try:
+        auth = await api.login(
+            email,
+            password,
+            telegram_username=user.username and f"@{user.username}" or None,
+        )
+    except BackendError as exc:
+        await message.answer(f"Email подтверждён, но вход не удался: {exc}", **ANSWER_KW)
+        await state.clear()
+        return
+
+    await state.clear()
+    me = auth.get("user")
+    if not me:
+        try:
+            me = await api.me()
+        except BackendError as exc:
+            await message.answer(
+                f"Email подтверждён, но профиль не получен: {exc}",
+                **ANSWER_KW,
+            )
+            return
+    await message.answer(
+        "Email подтверждён. Telegram привязан к аккаунту.",
+        **ANSWER_KW,
+    )
+    await _show_main_menu(message, me)
+
+
+@router.message(BotRegister.verification_code, ~F.text.startswith("/"))
+async def bot_register_verification_code(message: Message, state: FSMContext):
+    """Confirm email code after in-bot registration, then bind Telegram."""
+    code = (message.text or "").strip()
+    if not code.isdigit() or len(code) != 6:
+        await message.answer("Введите 6-значный код из письма:", **ANSWER_KW)
+        return
+
+    data = await state.get_data()
+    email = normalize_email(data.get("email", ""))
+    password = data.get("password", "")
+    if not email or not password:
+        await state.set_state(BotRegister.email)
+        await message.answer(
+            f"Регистрация прервана. Введите email {ALLOWED_DOMAINS_HINT_RU}:",
+            **ANSWER_KW,
+        )
+        return
+
+    api = client_from(message)
+    try:
+        await api.verify_email(email, code)
+    except BackendError as exc:
+        detail = str(exc).strip()
+        if exc.status_code == 400:
+            await message.answer(detail or "Неверный код. Попробуйте ещё раз:", **ANSWER_KW)
+            return
+        await message.answer(f"Не удалось подтвердить email: {exc}", **ANSWER_KW)
+        return
+
+    await _finish_auth_after_verify(message, state, email=email, password=password)
+
+
+@router.message(BotLogin.verification_code, ~F.text.startswith("/"))
+async def bot_login_verification_code(message: Message, state: FSMContext):
+    """Confirm email when login returned 403 (unverified account)."""
+    code = (message.text or "").strip()
+    if not code.isdigit() or len(code) != 6:
+        await message.answer("Введите 6-значный код из письма:", **ANSWER_KW)
+        return
+
+    data = await state.get_data()
+    email = normalize_email(data.get("email", ""))
+    password = data.get("password", "")
+    if not email or not password:
+        await state.set_state(BotLogin.email)
+        await message.answer(LOGIN_EMAIL_PROMPT_RU, **ANSWER_KW)
+        return
+
+    api = client_from(message)
+    try:
+        await api.verify_email(email, code)
+    except BackendError as exc:
+        detail = str(exc).strip()
+        if exc.status_code == 400:
+            await message.answer(detail or "Неверный код. Попробуйте ещё раз:", **ANSWER_KW)
+            return
+        await message.answer(f"Не удалось подтвердить email: {exc}", **ANSWER_KW)
+        return
+
+    await _finish_auth_after_verify(message, state, email=email, password=password)
+
+
 @router.message(F.text == "🏠 Меню")
 async def back_to_menu(message: Message, state: FSMContext):
     """Return to main menu or run /start when mid-login."""
@@ -574,9 +714,11 @@ async def back_to_menu(message: Message, state: FSMContext):
     auth_states = (
         BotLogin.email.state,
         BotLogin.password.state,
+        BotLogin.verification_code.state,
         BotRegister.email.state,
         BotRegister.full_name.state,
         BotRegister.password.state,
+        BotRegister.verification_code.state,
     )
     if current in auth_states:
         await cmd_start(message, state)

@@ -18,7 +18,7 @@ Web UI: React SPA at `services/frontend` (`/register`, `/login`). Bot login: `/l
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/auth/register` | Web signup → **202** + verification code by email (JWT after verify) |
+| POST | `/api/v1/auth/register` | Signup → **202** + email code (web & bot; JWT only after verify) |
 | POST | `/api/v1/auth/verify-email` | Confirm email with 6-digit code → JWT |
 | POST | `/api/v1/auth/login` | Web login → JWT; **403** if email not verified |
 | POST | `/api/v1/auth/link-token` | One-time Telegram link token (Bearer JWT) |

@@ -11,6 +11,7 @@ from auth.paths import (
     AUTH_LOGIN,
     AUTH_REGISTER,
     AUTH_TELEGRAM_LOGOUT,
+    AUTH_VERIFY_EMAIL,
     ME,
     USERS_LINK_TELEGRAM,
 )
@@ -95,14 +96,18 @@ class BackendClient:
         return response.json()
 
     async def check_email_exists(self, email: str) -> bool:
-        """Return True when a registered web account exists for the email."""
-        data = await self._request(
+        """Return True when a verified web account exists for the email."""
+        data = await self.check_email(email)
+        return bool(data.get("exists")) and bool(data.get("email_verified", True))
+
+    async def check_email(self, email: str) -> dict:
+        """Lookup email registration status (exists + verified flags)."""
+        return await self._request(
             "GET",
             AUTH_CHECK_EMAIL,
             params={"email": email.strip().lower()},
             auth=False,
         )
-        return bool(data.get("exists"))
 
     async def login(
         self,
@@ -128,9 +133,13 @@ class BackendClient:
         *,
         telegram_username: str | None = None,
     ) -> dict:
-        """Same as web register, then login to attach Telegram."""
+        """Register like the web app; returns verification payload (202) or auth.
+
+        Does not auto-login: caller must verify email, then call ``login`` to
+        bind Telegram.
+        """
         normalized = normalize_email(email)
-        await self._request(
+        return await self._request(
             "POST",
             AUTH_REGISTER,
             json={
@@ -141,8 +150,14 @@ class BackendClient:
             auth=False,
             extra_headers=self._telegram_headers(telegram_username),
         )
-        return await self.login(
-            normalized, password, telegram_username=telegram_username
+
+    async def verify_email(self, email: str, code: str) -> dict:
+        """Confirm email with a 6-digit code (same as web verify-email)."""
+        return await self._request(
+            "POST",
+            AUTH_VERIFY_EMAIL,
+            json={"email": normalize_email(email), "code": code},
+            auth=False,
         )
 
     async def link_telegram(

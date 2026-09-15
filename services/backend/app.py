@@ -304,8 +304,8 @@ def web_register(
 ):
     """Register a web user with email and password.
 
-    Web clients receive a verification code by email (no JWT until verified).
-    Telegram bot requests skip email verification and return JWT immediately.
+    Returns **202** and emails a verification code (no JWT until verified).
+    ``X-Telegram-Id`` only skips captcha — email verification is still required.
 
     Args:
         body: Email, password, and full name.
@@ -313,7 +313,7 @@ def web_register(
         x_telegram_id: When set (Telegram bot), captcha is not required.
 
     Returns:
-        202 with verification instructions (web), or JWT (Telegram bot).
+        202 with verification instructions.
 
     Raises:
         HTTPException: 400 for invalid domain or captcha; 409 if email is already registered.
@@ -325,8 +325,6 @@ def web_register(
     ok, domain_err = validate_spbstu_email(email)
     if not ok:
         raise HTTPException(400, domain_err or "Invalid email domain")
-
-    bot_register = x_telegram_id is not None
 
     with get_conn() as conn:
         existing = fetch_one(
@@ -340,12 +338,6 @@ def web_register(
         if existing:
             if existing.get("email_verified"):
                 raise HTTPException(409, EMAIL_ALREADY_EXISTS_RU)
-            if bot_register:
-                raise HTTPException(
-                    409,
-                    "Email зарегистрирован, но не подтверждён. "
-                    "Подтвердите почту на сайте или дождитесь нового кода.",
-                )
             code = issue_verification_code(conn, existing["id"])
             try:
                 send_verification_email(
@@ -367,7 +359,7 @@ def web_register(
             conn,
             """
             INSERT INTO users (email, password_hash, full_name, role, is_active, email_verified)
-            VALUES (%s, %s, %s, %s, true, %s)
+            VALUES (%s, %s, %s, %s, true, false)
             RETURNING id::text, email, full_name, role, telegram_id
             """,
             (
@@ -375,13 +367,8 @@ def web_register(
                 hash_password(body.password),
                 body.full_name,
                 user_role,
-                bot_register,
             ),
         )
-
-        if bot_register:
-            token = create_access_token(user["id"])
-            return {"access_token": token, "token_type": "bearer", "user": user}
 
         code = issue_verification_code(conn, user["id"])
         try:
@@ -638,10 +625,18 @@ def check_email_exists(email: EmailStr = Query(...)):
     with get_conn() as conn:
         row = fetch_one(
             conn,
-            "SELECT id::text FROM users WHERE lower(email) = %s AND is_active = true",
+            """
+            SELECT id::text, email_verified
+            FROM users WHERE lower(email) = %s AND is_active = true
+            """,
             (normalized,),
         )
-    return {"exists": row is not None}
+    if not row:
+        return {"exists": False, "email_verified": False}
+    return {
+        "exists": True,
+        "email_verified": bool(row.get("email_verified")),
+    }
 
 
 @app.post("/api/v1/auth/login")

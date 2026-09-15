@@ -23,16 +23,18 @@ class Occupancy(StatesGroup):
     date = State()
 
 
-class BotLogin(StatesGroup):
-    """FSM steps for email/password login inside the bot."""
-
-    email = State()
-    password = State()
-
-
 class BotRegister(StatesGroup):
     """FSM steps for in-bot registration (same fields as web signup)."""
 
     email = State()
     full_name = State()
     password = State()
+    verification_code = State()
+
+
+class BotLogin(StatesGroup):
+    """FSM steps for email/password login inside the bot."""
+
+    email = State()
+    password = State()
+    verification_code = State()

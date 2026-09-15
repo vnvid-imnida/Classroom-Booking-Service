@@ -4,10 +4,10 @@
 
 ## Схема
 
-1. Регистрация: на сайте (`FRONTEND_URL/register`) или в боте (кнопка «Регистрация» при неизвестном email → email → ФИО → пароль → `POST /api/v1/auth/register` + вход).
-2. В боте: `/start` — сразу запрос email; `/login` — тот же FSM (email → пароль).
+1. Регистрация: на сайте (`FRONTEND_URL/register`) или в боте (кнопка «Регистрация» → email → ФИО → пароль → **код из письма** → `POST /api/v1/auth/verify-email` → `POST /api/v1/auth/login` с `X-Telegram-Id`).
+2. В боте: `/start` — сразу запрос email; `/login` — тот же FSM (email → пароль; при 403 — ввод кода).
 3. Неизвестный email: сообщение «Пользователь с таким email не найден» и inline-кнопка «Регистрация» (не «неверный пароль»).
-4. Бот вызывает `POST /api/v1/auth/login` с заголовками `X-Telegram-Id` и опционально `X-Telegram-Username`.
+4. Бот вызывает `POST /api/v1/auth/login` с заголовками `X-Telegram-Id` и опционально `X-Telegram-Username` **после** подтверждения email.
 5. Backend привязывает `telegram_id` к веб-аккаунту и возвращает JWT.
 6. Бот показывает главное меню; `AuthMiddleware` пропускает запросы с привязанным Telegram.
 

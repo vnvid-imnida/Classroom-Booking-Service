@@ -32,9 +32,11 @@ async def _in_bot_login_wizard(state: FSMContext | None) -> bool:
     return current in (
         BotLogin.email.state,
         BotLogin.password.state,
+        BotLogin.verification_code.state,
         BotRegister.email.state,
         BotRegister.full_name.state,
         BotRegister.password.state,
+        BotRegister.verification_code.state,
     )
 
 

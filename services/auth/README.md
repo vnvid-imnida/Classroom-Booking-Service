@@ -27,10 +27,10 @@ HTTP handlers live in `services/backend/app.py`; bot and web are thin clients.
 - Telegram bot requests (`X-Telegram-Id` header) skip captcha.
 - If `TURNSTILE_SECRET_KEY` is empty, captcha is disabled (local dev without keys).
 
-### Email verification (web)
+### Email verification (web + Telegram bot)
 
 - After `POST /api/v1/auth/register` the API returns **202** (no JWT) and sends a 6-digit code.
 - `POST /api/v1/auth/verify-email` with `{ email, code }` confirms the mailbox and returns JWT.
 - `POST /api/v1/auth/login` returns **403** until `email_verified` is true.
+- Telegram bot: same register → code in chat → verify → login (binds Telegram). Captcha still skipped via `X-Telegram-Id`.
 - Local dev: set `EMAIL_ENABLED=false` — the code is logged by the backend.
-- Telegram bot registration (`X-Telegram-Id`) skips email verification (MVP).
