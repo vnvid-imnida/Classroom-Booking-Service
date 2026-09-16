@@ -20,6 +20,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg2
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -945,13 +946,23 @@ def available_rooms(
     starts_at: str = Query(...),
     ends_at: str = Query(...),
     building_code: str | None = None,
+    min_capacity: int | None = None,
+    has_projector: bool | None = None,
+    has_whiteboard: bool | None = None,
+    is_accessible: bool | None = None,
 ):
     """List rooms free for the given time interval.
+
+    Excludes rooms with an ACTIVE booking or PENDING request overlapping the interval.
 
     Args:
         starts_at: Interval start (ISO-8601).
         ends_at: Interval end (ISO-8601).
         building_code: Optional building filter.
+        min_capacity: Optional minimum capacity.
+        has_projector: Optional projector filter.
+        has_whiteboard: Optional whiteboard filter.
+        is_accessible: Optional accessibility filter.
 
     Raises:
         HTTPException: 400 when ``ends_at`` is not after ``starts_at``.
@@ -966,7 +977,19 @@ def available_rooms(
     if building_code:
         clauses.append("b.code = %s")
         params.append(building_code)
-    params.extend([start_dt, end_dt])
+    if min_capacity is not None:
+        clauses.append("r.capacity >= %s")
+        params.append(min_capacity)
+    if has_projector is not None:
+        clauses.append("r.has_projector = %s")
+        params.append(has_projector)
+    if has_whiteboard is not None:
+        clauses.append("r.has_whiteboard = %s")
+        params.append(has_whiteboard)
+    if is_accessible is not None:
+        clauses.append("r.is_accessible = %s")
+        params.append(is_accessible)
+    params.extend([start_dt, end_dt, start_dt, end_dt])
     where = " AND ".join(clauses)
 
     with get_conn() as conn:
@@ -974,7 +997,8 @@ def available_rooms(
             conn,
             f"""
             SELECT r.id, b.code AS building_code, b.name AS building_name,
-                   r.room_number, r.floor, r.capacity
+                   r.room_number, r.floor, r.capacity,
+                   r.has_projector, r.has_whiteboard, r.is_accessible
             FROM rooms r
             JOIN buildings b ON b.id = r.building_id
             WHERE {where}
@@ -983,6 +1007,13 @@ def available_rooms(
                   WHERE bk.room_id = r.id
                     AND bk.status = 'ACTIVE'
                     AND tstzrange(bk.starts_at, bk.ends_at, '[)') &&
+                        tstzrange(%s, %s, '[)')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM booking_requests br
+                  WHERE br.room_id = r.id
+                    AND br.status = 'PENDING'
+                    AND tstzrange(br.starts_at, br.ends_at, '[)') &&
                         tstzrange(%s, %s, '[)')
               )
             ORDER BY b.code, r.room_number
@@ -1001,20 +1032,33 @@ def event_purposes(user: dict = Depends(get_current_user)):
         )
 
 
+try:
+    _MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+except ZoneInfoNotFoundError:
+    _MOSCOW_TZ = timezone(timedelta(hours=3))
+
+
+def _moscow_day_bounds(date: str) -> tuple[datetime, datetime]:
+    """Return UTC [start, end) for a calendar day in Europe/Moscow."""
+    day = datetime.fromisoformat(date).date()
+    start_local = datetime(day.year, day.month, day.day, tzinfo=_MOSCOW_TZ)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
 @app.get("/api/v1/rooms/{room_id}/occupancy")
 def room_occupancy(
     room_id: int,
     user: dict = Depends(get_current_user),
     date: str = Query(..., description="YYYY-MM-DD"),
 ):
-    """Return bookings and pending requests overlapping a room on one day.
+    """Return bookings and pending requests overlapping a room on one Moscow day.
 
     Args:
         room_id: Room primary key.
-        date: Calendar day in ``YYYY-MM-DD`` format.
+        date: Calendar day in ``YYYY-MM-DD`` format (Europe/Moscow).
     """
-    day_start = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = _moscow_day_bounds(date)
     with get_conn() as conn:
         return fetch_all(
             conn,

@@ -1,21 +1,21 @@
 ---
-description: Web frontend roadmap — connect site to real DB/API (branch order)
+description: Web frontend roadmap — single branch/PR for web work
 alwaysApply: true
 ---
 
 # Web roadmap (spbpu-booking)
 
-Work from `develop`. Branch prefix: `feature/web/...` (backend-only: `feature/backend/...`).
-One PR per step; merge to `develop` before starting the next from fresh `develop`.
+Ship web work on **one branch** → **one PR** to `develop`.
+Current branch: `feature/web/real-api` (keep using it for all steps below).
+Commit per step; open/update a single PR when ready.
 
-## Order
+## Steps (same branch)
 
-0. **`feature/web/real-api`** (current) — no mock short-circuit; login/rooms/bookings hit real backend
-1. **`feature/web/search`** — room search from `GET /api/v1/rooms` (+ available by slot)
-2. **`feature/web/account`** — cabinet: real requests/bookings, cancel
-3. **`feature/web/schedule`** — calendar from real bookings/occupancy
-4. **`feature/web/booking`** — create request from site (`POST /booking-requests`)
-5a. **`feature/backend/admin-rooms`** — room CRUD API for admin
-5b. **`feature/web/admin-panel`** — admin UI on real moderation + room CRUD
+0. ~~real API / no mock / Moscow TZ~~ (done)
+1. **search by free slot** — `GET /api/v1/rooms/available` + RUZ pairs (in progress)
+2. **account** — cabinet active/archive + cancel
+3. **schedule** — calendar polish / occupancy if needed
+4. **booking** — create request from site
+5. **admin rooms** — backend CRUD + admin UI create/delete
 
-Auth (web+bot) and Telegram bot are done; do not re-open unless fixing regressions.
+Auth + Telegram bot are done; only fix regressions if they break.

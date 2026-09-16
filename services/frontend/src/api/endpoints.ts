@@ -11,6 +11,7 @@ import type {
   VerifyEmailPayload,
 } from '../types';
 import { roleForEmail } from '../utils/emailDomains';
+import { moscowDateTimeToUtcIso } from '../utils/dateTime';
 
 type BackendUser = {
   id: string;
@@ -190,8 +191,23 @@ export const buildingsApi = {
 };
 
 export const roomsApi = {
-  search: (filters: RoomSearchFilters) =>
-    apiClient
+  search: (filters: RoomSearchFilters) => {
+    const hasSlot = Boolean(filters.date && filters.fromTime && filters.toTime);
+    if (hasSlot) {
+      return apiClient
+        .get<BackendRoomRow[]>('/api/v1/rooms/available', {
+          params: {
+            starts_at: moscowDateTimeToUtcIso(filters.date!, filters.fromTime!),
+            ends_at: moscowDateTimeToUtcIso(filters.date!, filters.toTime!),
+            building_code: filters.building,
+            min_capacity: filters.minCapacity,
+            has_projector: filters.hasProjector,
+            has_whiteboard: filters.hasWhiteboard,
+          },
+        })
+        .then((r) => asRoomRows(r.data).map(mapBackendRoom));
+    }
+    return apiClient
       .get<BackendRoomRow[]>('/api/v1/rooms', {
         params: {
           building_code: filters.building,
@@ -200,14 +216,22 @@ export const roomsApi = {
           has_whiteboard: filters.hasWhiteboard,
         },
       })
-      .then((r) => asRoomRows(r.data).map(mapBackendRoom)),
+      .then((r) => asRoomRows(r.data).map(mapBackendRoom));
+  },
   list: () =>
     apiClient
       .get<BackendRoomRow[]>('/api/v1/rooms')
       .then((r) => asRoomRows(r.data).map(mapBackendRoom)),
   getById: (id: string) =>
     apiClient.get<BackendRoomRow>(`/api/v1/rooms/${id}`).then((r) => mapBackendRoom(r.data)),
-  /** Room CRUD API lands in feature/backend/admin-rooms; until then expect 404. */
+  occupancy: (id: string, date: string) =>
+    apiClient
+      .get<Array<{ starts_at: string; ends_at: string; title?: string; status?: string }>>(
+        `/api/v1/rooms/${id}/occupancy`,
+        { params: { date } },
+      )
+      .then((r) => (Array.isArray(r.data) ? r.data : [])),
+  /** Room CRUD API lands later in admin-rooms step; until then expect 404. */
   create: (payload: RoomCreatePayload) =>
     apiClient.post<Room>('/api/v1/rooms', payload).then((r) => r.data),
   remove: (id: string) =>
