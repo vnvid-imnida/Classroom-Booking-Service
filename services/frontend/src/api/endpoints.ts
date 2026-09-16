@@ -1,6 +1,8 @@
 import { apiClient } from './client';
 import type {
   Booking,
+  BookingRequestCreatePayload,
+  EventPurpose,
   LoginPayload,
   RegisterPayload,
   RegisterResult,
@@ -271,8 +273,17 @@ export const bookingsApi = {
       ...asBookingRows(requestsRes.data).map((row) => mapBackendBooking(row, 'request')),
     ];
   },
-  create: (payload: Omit<Booking, 'id' | 'status' | 'kind'>) =>
-    apiClient.post<Booking>('/api/v1/booking-requests', payload).then((r) => r.data),
+  create: (payload: BookingRequestCreatePayload) =>
+    apiClient
+      .post<{ id: string; status: string }>('/api/v1/booking-requests', {
+        ...payload,
+        action: payload.action ?? 'CREATE',
+      })
+      .then((r) => r.data),
+  submit: (id: string) =>
+    apiClient
+      .post<{ id: string; status: string }>(`/api/v1/booking-requests/${id}/submit`)
+      .then((r) => r.data),
   cancel: (item: Pick<Booking, 'id' | 'kind'>) => {
     const path =
       item.kind === 'request'
@@ -290,4 +301,11 @@ export const bookingsApi = {
         comment: 'Отклонено модератором',
       })
       .then(() => undefined),
+};
+
+export const purposesApi = {
+  list: () =>
+    apiClient
+      .get<EventPurpose[]>('/api/v1/event-purposes')
+      .then((r) => (Array.isArray(r.data) ? r.data : [])),
 };

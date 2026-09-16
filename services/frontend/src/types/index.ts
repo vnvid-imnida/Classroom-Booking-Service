@@ -81,6 +81,23 @@ export interface RoomSearchFilters {
 
 export type RoomCreatePayload = Omit<Room, 'id'>;
 
+export interface EventPurpose {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface BookingRequestCreatePayload {
+  room_id: number;
+  purpose_id: number;
+  title: string;
+  description?: string;
+  starts_at: string;
+  ends_at: string;
+  action?: 'CREATE' | 'RESCHEDULE';
+  target_booking_id?: string;
+}
+
 // Локализация
 export const STATUS_LABELS: Record<BookingStatus, string> = {
   draft: 'Черновик',

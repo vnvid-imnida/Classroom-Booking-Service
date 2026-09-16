@@ -41,11 +41,11 @@ function rangesOverlap(start1: number, end1: number, start2: number, end2: numbe
   return start1 < end2 && end1 > start2;
 }
 
-/** Free RUZ pair labels for a Moscow calendar day given occupancy intervals. */
-export function freeRuzSlotLabels(
+/** Free RUZ pair slots for a Moscow calendar day given occupancy intervals. */
+export function freeRuzSlots(
   date: string,
   occupancy: Array<{ starts_at: string; ends_at: string }>,
-): string[] {
+): typeof RUZ_TIME_SLOTS[number][] {
   return RUZ_TIME_SLOTS.filter((slot) => {
     const start = new Date(moscowDateTimeToUtcIso(date, slot.start)).getTime();
     const end = new Date(moscowDateTimeToUtcIso(date, slot.end)).getTime();
@@ -54,5 +54,13 @@ export function freeRuzSlotLabels(
       const oe = new Date(occ.ends_at).getTime();
       return rangesOverlap(start, end, os, oe);
     });
-  }).map((s) => s.label);
+  });
+}
+
+/** Free RUZ pair labels for a Moscow calendar day given occupancy intervals. */
+export function freeRuzSlotLabels(
+  date: string,
+  occupancy: Array<{ starts_at: string; ends_at: string }>,
+): string[] {
+  return freeRuzSlots(date, occupancy).map((s) => s.label);
 }

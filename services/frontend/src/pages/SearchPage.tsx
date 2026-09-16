@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import {
   Box, Paper, Typography, Stack, TextField, FormControlLabel, Checkbox,
@@ -8,16 +8,22 @@ import {
 import { buildingsApi, roomsApi } from '../api/endpoints';
 import type { Room, RoomSearchFilters } from '../types';
 import { freeRuzSlotLabels, RUZ_TIME_SLOTS } from '../utils/dateTime';
+import BookingRequestDialog from '../components/BookingRequestDialog';
 
 function RoomCard({
   room,
   date,
   highlightSlot,
+  onBook,
 }: {
   room: Room;
   date?: string;
+  /** Slot from search filters («Время» не «Не важно»). */
   highlightSlot?: string;
+  onBook: (room: Room, slotLabel?: string) => void;
 }) {
+  const [pickedSlot, setPickedSlot] = useState<string | undefined>();
+
   const occupancyQuery = useQuery({
     queryKey: ['room-occupancy', room.id, date],
     queryFn: () => roomsApi.occupancy(room.id, date!),
@@ -28,6 +34,18 @@ function RoomCard({
     if (!date || !occupancyQuery.data) return [];
     return freeRuzSlotLabels(date, occupancyQuery.data);
   }, [date, occupancyQuery.data]);
+
+  // Reset manual pick when room/date/filter pair changes; filter pair stays default.
+  useEffect(() => {
+    setPickedSlot(undefined);
+  }, [room.id, date, highlightSlot]);
+
+  const selectedSlot =
+    pickedSlot ??
+    (highlightSlot && freeSlots.includes(highlightSlot) ? highlightSlot : undefined);
+
+  const needsSlotPick = Boolean(date && freeSlots.length > 0);
+  const canBook = !needsSlotPick || Boolean(selectedSlot);
 
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -69,22 +87,40 @@ function RoomCard({
             </Typography>
           )}
           {date && occupancyQuery.isSuccess && freeSlots.length > 0 && (
-            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-              {freeSlots.map((label) => (
-                <Chip
-                  key={label}
-                  size="small"
-                  variant={highlightSlot === label ? 'filled' : 'outlined'}
-                  color={highlightSlot === label ? 'success' : 'default'}
-                  label={label}
-                />
-              ))}
-            </Stack>
+            <>
+              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                {freeSlots.map((label) => {
+                  const selected = selectedSlot === label;
+                  return (
+                    <Chip
+                      key={label}
+                      size="small"
+                      clickable
+                      onClick={() => setPickedSlot(label)}
+                      variant={selected ? 'filled' : 'outlined'}
+                      color={selected ? 'success' : 'default'}
+                      label={label}
+                      sx={{ cursor: 'pointer' }}
+                    />
+                  );
+                })}
+              </Stack>
+              {!selectedSlot && (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.75 }}>
+                  Выберите пару, затем «Забронировать»
+                </Typography>
+              )}
+            </>
           )}
         </Box>
       </CardContent>
       <CardActions>
-        <Button size="small" variant="outlined" disabled>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={!canBook}
+          onClick={() => onBook(room, selectedSlot)}
+        >
           Забронировать
         </Button>
       </CardActions>
@@ -96,6 +132,8 @@ export default function SearchPage() {
   const [filters, setFilters] = useState<RoomSearchFilters>({});
   const [active, setActive] = useState<RoomSearchFilters>({});
   const [slotError, setSlotError] = useState<string | null>(null);
+  const [bookingRoom, setBookingRoom] = useState<Room | null>(null);
+  const [bookingSlot, setBookingSlot] = useState<string | undefined>();
 
   const buildingsQuery = useQuery({
     queryKey: ['buildings'],
@@ -256,6 +294,8 @@ export default function SearchPage() {
           <Typography variant="caption" color="text.secondary">
             Укажите дату и нажмите «Найти», чтобы на карточках появились свободные пары.
             Дата + время — только аудитории, свободные в этот интервал.
+            Клик по свободной паре выбирает время для «Забронировать» (при заданном
+            времени пара уже зелёная — можно переключить на другую).
           </Typography>
         </Stack>
       </Paper>
@@ -288,7 +328,15 @@ export default function SearchPage() {
         <Grid container spacing={2}>
           {(rooms ?? []).map((room) => (
             <Grid item xs={12} sm={6} md={4} key={room.id}>
-              <RoomCard room={room} date={active.date} highlightSlot={highlightSlot} />
+              <RoomCard
+                room={room}
+                date={active.date}
+                highlightSlot={highlightSlot}
+                onBook={(r, slot) => {
+                  setBookingRoom(r);
+                  setBookingSlot(slot);
+                }}
+              />
             </Grid>
           ))}
           {(rooms?.length ?? 0) === 0 && (
@@ -298,6 +346,17 @@ export default function SearchPage() {
           )}
         </Grid>
       )}
+
+      <BookingRequestDialog
+        open={!!bookingRoom}
+        room={bookingRoom}
+        initialDate={active.date}
+        initialSlotLabel={bookingSlot ?? highlightSlot}
+        onClose={() => {
+          setBookingRoom(null);
+          setBookingSlot(undefined);
+        }}
+      />
     </Box>
   );
 }
