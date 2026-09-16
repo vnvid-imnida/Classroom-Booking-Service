@@ -7,8 +7,10 @@ import {
 } from '@mui/material';
 import { buildingsApi, roomsApi } from '../api/endpoints';
 import type { Room, RoomSearchFilters } from '../types';
-import { freeRuzSlotLabels, RUZ_TIME_SLOTS } from '../utils/dateTime';
+import { freeRuzSlotLabels, isMoscowSunday, RUZ_TIME_SLOTS } from '../utils/dateTime';
 import BookingRequestDialog from '../components/BookingRequestDialog';
+
+const SUNDAY_BOOKING_HINT = 'В воскресенье бронирование недоступно (выходной).';
 
 function RoomCard({
   room,
@@ -22,18 +24,20 @@ function RoomCard({
   highlightSlot?: string;
   onBook: (room: Room, slotLabel?: string) => void;
 }) {
-  const [pickedSlot, setPickedSlot] = useState<string | undefined>();
+  const sunday = Boolean(date && isMoscowSunday(date));
 
   const occupancyQuery = useQuery({
     queryKey: ['room-occupancy', room.id, date],
     queryFn: () => roomsApi.occupancy(room.id, date!),
-    enabled: Boolean(date),
+    enabled: Boolean(date) && !sunday,
   });
 
   const freeSlots = useMemo(() => {
-    if (!date || !occupancyQuery.data) return [];
+    if (!date || sunday || !occupancyQuery.data) return [];
     return freeRuzSlotLabels(date, occupancyQuery.data);
-  }, [date, occupancyQuery.data]);
+  }, [date, sunday, occupancyQuery.data]);
+
+  const [pickedSlot, setPickedSlot] = useState<string | undefined>();
 
   // Reset manual pick when room/date/filter pair changes; filter pair stays default.
   useEffect(() => {
@@ -44,8 +48,8 @@ function RoomCard({
     pickedSlot ??
     (highlightSlot && freeSlots.includes(highlightSlot) ? highlightSlot : undefined);
 
-  const needsSlotPick = Boolean(date && freeSlots.length > 0);
-  const canBook = !needsSlotPick || Boolean(selectedSlot);
+  const needsSlotPick = Boolean(date && !sunday && freeSlots.length > 0);
+  const canBook = !sunday && (!needsSlotPick || Boolean(selectedSlot));
 
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -71,22 +75,27 @@ function RoomCard({
               Укажите дату в фильтрах, чтобы увидеть слоты
             </Typography>
           )}
-          {date && occupancyQuery.isLoading && (
+          {sunday && (
+            <Typography variant="caption" color="text.secondary">
+              {SUNDAY_BOOKING_HINT}
+            </Typography>
+          )}
+          {date && !sunday && occupancyQuery.isLoading && (
             <Typography variant="caption" color="text.secondary">
               Загрузка слотов…
             </Typography>
           )}
-          {date && occupancyQuery.isError && (
+          {date && !sunday && occupancyQuery.isError && (
             <Typography variant="caption" color="error">
               Не удалось загрузить занятость
             </Typography>
           )}
-          {date && occupancyQuery.isSuccess && freeSlots.length === 0 && (
+          {date && !sunday && occupancyQuery.isSuccess && freeSlots.length === 0 && (
             <Typography variant="caption" color="text.secondary">
               На этот день свободных пар нет
             </Typography>
           )}
-          {date && occupancyQuery.isSuccess && freeSlots.length > 0 && (
+          {date && !sunday && occupancyQuery.isSuccess && freeSlots.length > 0 && (
             <>
               <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                 {freeSlots.map((label) => {
@@ -150,7 +159,7 @@ export default function SearchPage() {
     queries: (rooms ?? []).map((room) => ({
       queryKey: ['room-occupancy', room.id, active.date],
       queryFn: () => roomsApi.occupancy(room.id, active.date!),
-      enabled: Boolean(active.date && rooms?.length),
+      enabled: Boolean(active.date && rooms?.length && !isMoscowSunday(active.date)),
     })),
   });
 
@@ -172,6 +181,10 @@ export default function SearchPage() {
     const hasTime = Boolean(filters.fromTime || filters.toTime);
     const hasFullSlot = Boolean(filters.date && filters.fromTime && filters.toTime);
 
+    if (filters.date && isMoscowSunday(filters.date)) {
+      setSlotError(SUNDAY_BOOKING_HINT);
+      return;
+    }
     if (hasTime && !hasFullSlot) {
       setSlotError('Чтобы искать свободные аудитории, укажите и дату, и время.');
       return;
@@ -234,7 +247,15 @@ export default function SearchPage() {
               label="Дата"
               InputLabelProps={{ shrink: true }}
               value={filters.date ?? ''}
-              onChange={(e) => setFilters({ ...filters, date: e.target.value || undefined })}
+              onChange={(e) => {
+                const next = e.target.value || undefined;
+                setFilters({ ...filters, date: next });
+                if (next && isMoscowSunday(next)) {
+                  setSlotError(SUNDAY_BOOKING_HINT);
+                } else {
+                  setSlotError(null);
+                }
+              }}
               sx={{ minWidth: 180 }}
             />
             <FormControl sx={{ minWidth: 220 }}>
@@ -296,6 +317,7 @@ export default function SearchPage() {
             Дата + время — только аудитории, свободные в этот интервал.
             Клик по свободной паре выбирает время для «Забронировать» (при заданном
             времени пара уже зелёная — можно переключить на другую).
+            Воскресенье — выходной, бронирование недоступно.
           </Typography>
         </Stack>
       </Paper>
