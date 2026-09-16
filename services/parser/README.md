@@ -8,8 +8,10 @@
 
 1. Тянет корпуса / аудитории / занятия из `https://ruz.spbstu.ru/api/v1/ruz`.
 2. Сопоставляет аудитории с локальными `rooms` (корпус + номер).
-3. Upsert броней `source=RUZ` на окно `RUZ_SYNC_WEEKS` недель вперёд.
-4. Периодический sync в фоне + ручной trigger по HTTP.
+3. Перед upsert слота `source=RUZ` отменяет пересекающиеся **ACTIVE MANUAL** брони с причиной про расписание; организатору уходит email и/или Telegram.
+4. Upsert броней RUZ на окно `RUZ_SYNC_WEEKS` недель; периодический sync + ручной trigger.
+
+Нужен SYSTEM-пользователь из миграции `012_system_user.sql` (`cancelled_by`).
 
 ## Структура
 
@@ -20,6 +22,7 @@
 | `ruz_client.py` | HTTP-клиент RUZ |
 | `db.py` | Postgres upsert |
 | `config.py` | env (+ `.env` с корня репо) |
+| `notify.py` / `email_utils.py` / `telegram_utils.py` | отмена MANUAL → уведомления |
 
 ## HTTP
 
@@ -41,6 +44,8 @@
 | `RUZ_SYNC_WEEKS` | `3` | горизонт sync |
 | `RUZ_SYNC_INTERVAL_SECONDS` | `3600` | период; `≤0` — только ручной |
 | `RUZ_REQUEST_DELAY_SEC` | `0.2` | пауза между запросами к RUZ |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_NOTIFY_ENABLED` | — | уведомления об авто-отмене |
+| `EMAIL_ENABLED`, `SMTP_*` | — | то же по email |
 
 ## Запуск
 

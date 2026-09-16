@@ -12,9 +12,12 @@ from psycopg2 import errors as pg_errors
 
 from config import BUILDING_CODE_TO_RUZ_ABBR, RUZ_BASE_URL, RUZ_SYNC_WEEKS
 from db import execute, fetch_all, fetch_one, get_conn
+from notify import RUZ_OVERRIDE_REASON, notify_ruz_override_cancel
 from ruz_client import RuzClient
 
 logger = logging.getLogger(__name__)
+
+SYSTEM_USER_ID = "00000000-0000-4000-8000-000000000001"
 
 try:
     MOSCOW_TZ = ZoneInfo("Europe/Moscow")
@@ -32,6 +35,7 @@ class SyncStats:
     imported: int = 0
     updated: int = 0
     completed_stale: int = 0
+    cancelled_manual: int = 0
     conflicts: int = 0
     skipped_unmapped: int = 0
     errors: list[str] = field(default_factory=list)
@@ -43,6 +47,7 @@ class SyncStats:
             "imported": self.imported,
             "updated": self.updated,
             "completed_stale": self.completed_stale,
+            "cancelled_manual": self.cancelled_manual,
             "conflicts": self.conflicts,
             "skipped_unmapped": self.skipped_unmapped,
             "errors": self.errors[:20],
@@ -129,6 +134,92 @@ def _map_rooms(client: RuzClient, local_rooms: list[dict], stats: SyncStats) -> 
     return mapped
 
 
+def _resolve_system_user_id(conn) -> str | None:
+    row = fetch_one(
+        conn,
+        """
+        SELECT id::text
+        FROM users
+        WHERE id = %s::uuid AND role = 'SYSTEM' AND is_active = true
+        """,
+        (SYSTEM_USER_ID,),
+    )
+    if row:
+        return row["id"]
+    row = fetch_one(
+        conn,
+        """
+        SELECT id::text
+        FROM users
+        WHERE role = 'SYSTEM' AND is_active = true
+        ORDER BY created_at
+        LIMIT 1
+        """,
+    )
+    return row["id"] if row else None
+
+
+def _cancel_overlapping_manual(
+    conn,
+    *,
+    room_id: int,
+    starts_at: datetime,
+    ends_at: datetime,
+    system_user_id: str,
+    stats: SyncStats,
+) -> list[dict]:
+    """Cancel ACTIVE MANUAL bookings that overlap the RUZ slot; return contexts for notify."""
+    overlapping = fetch_all(
+        conn,
+        """
+        SELECT bk.id::text AS booking_id,
+               bk.title,
+               bk.starts_at,
+               bk.ends_at,
+               u.email,
+               u.full_name,
+               u.telegram_id,
+               b.code AS building_code,
+               r.room_number
+        FROM bookings bk
+        JOIN users u ON u.id = bk.organizer_id
+        JOIN rooms r ON r.id = bk.room_id
+        JOIN buildings b ON b.id = r.building_id
+        WHERE bk.room_id = %s
+          AND bk.status = 'ACTIVE'
+          AND bk.source = 'MANUAL'
+          AND tstzrange(bk.starts_at, bk.ends_at, '[)') &&
+              tstzrange(%s, %s, '[)')
+        """,
+        (room_id, starts_at, ends_at),
+    )
+    cancelled: list[dict] = []
+    for row in overlapping:
+        execute(
+            conn,
+            """
+            UPDATE bookings
+            SET status = 'CANCELLED',
+                cancelled_by = %s::uuid,
+                cancelled_at = now(),
+                cancel_reason = %s
+            WHERE id = %s::uuid
+              AND status = 'ACTIVE'
+              AND source = 'MANUAL'
+            """,
+            (system_user_id, RUZ_OVERRIDE_REASON, row["booking_id"]),
+        )
+        row["cancel_reason"] = RUZ_OVERRIDE_REASON
+        cancelled.append(row)
+        stats.cancelled_manual += 1
+        logger.info(
+            "Cancelled MANUAL booking %s due to RUZ overlap (room_id=%s)",
+            row["booking_id"],
+            room_id,
+        )
+    return cancelled
+
+
 def _upsert_lesson(
     conn,
     *,
@@ -140,7 +231,20 @@ def _upsert_lesson(
     external_event_id: str,
     sync_run_id: int,
     stats: SyncStats,
-) -> None:
+    system_user_id: str | None,
+) -> list[dict]:
+    """Upsert a RUZ lesson. Cancels overlapping MANUAL bookings first. Returns cancelled contexts."""
+    cancelled: list[dict] = []
+    if system_user_id:
+        cancelled = _cancel_overlapping_manual(
+            conn,
+            room_id=room_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            system_user_id=system_user_id,
+            stats=stats,
+        )
+
     existing = fetch_one(
         conn,
         """
@@ -186,6 +290,7 @@ def _upsert_lesson(
     except pg_errors.ExclusionViolation:
         # Caller rolls back to a savepoint and counts the conflict.
         raise
+    return cancelled
 
 
 def run_sync(*, weeks: int | None = None, client: RuzClient | None = None) -> dict:
@@ -278,24 +383,45 @@ def run_sync(*, weeks: int | None = None, client: RuzClient | None = None) -> di
                             }
                         )
 
+        pending_notifies: list[tuple[dict, str | None]] = []
+
         with get_conn() as conn:
+            system_user_id = _resolve_system_user_id(conn)
+            if not system_user_id:
+                logger.error(
+                    "SYSTEM user missing (run migration 012). "
+                    "Overlapping MANUAL bookings will block RUZ import."
+                )
+
             for item in pending:
                 try:
                     # Nested savepoint so one exclusion conflict does not abort the batch.
                     with conn.cursor() as cur:
                         cur.execute("SAVEPOINT ruz_lesson")
+                    cancelled_ctx: list[dict] = []
                     try:
-                        _upsert_lesson(conn, sync_run_id=stats.sync_run_id, stats=stats, **item)
+                        cancelled_ctx = _upsert_lesson(
+                            conn,
+                            sync_run_id=stats.sync_run_id,
+                            stats=stats,
+                            system_user_id=system_user_id,
+                            **item,
+                        )
                         with conn.cursor() as cur:
                             cur.execute("RELEASE SAVEPOINT ruz_lesson")
                     except pg_errors.ExclusionViolation:
                         with conn.cursor() as cur:
                             cur.execute("ROLLBACK TO SAVEPOINT ruz_lesson")
                         stats.conflicts += 1
-                        logger.info(
-                            "Skip RUZ slot overlapping MANUAL booking: %s",
+                        logger.warning(
+                            "Unresolved overlap for RUZ slot %s (room_id=%s)",
                             item["external_event_id"],
+                            item["room_id"],
                         )
+                        continue
+
+                    for ctx in cancelled_ctx:
+                        pending_notifies.append((ctx, item.get("title")))
                 except Exception as exc:  # noqa: BLE001
                     stats.errors.append(f"upsert {item['external_event_id']}: {exc}")
                     try:
@@ -353,6 +479,15 @@ def run_sync(*, weeks: int | None = None, client: RuzClient | None = None) -> di
                     stats.sync_run_id,
                 ),
             )
+
+        for ctx, lesson_title in pending_notifies:
+            try:
+                notify_ruz_override_cancel(ctx, lesson_title=lesson_title)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Notify failed after RUZ override cancel %s",
+                    ctx.get("booking_id"),
+                )
 
         result = {"status": "ok", **stats.as_dict()}
         _last_result = result
