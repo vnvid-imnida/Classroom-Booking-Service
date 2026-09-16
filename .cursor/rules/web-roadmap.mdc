@@ -16,6 +16,6 @@ Commit per step; open/update a single PR when ready.
 2. ~~account — cabinet active/archive + cancel~~ (done)
 3. ~~schedule~~ (skipped — personal calendar only; no foreign slots)
 4. ~~booking — create request from site~~ (done)
-5. **admin rooms** — backend CRUD + admin UI create/delete
+5. ~~admin rooms — backend CRUD + admin UI create/delete~~ (done)
 
 Auth + Telegram bot are done; only fix regressions if they break.

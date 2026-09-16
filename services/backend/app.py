@@ -244,6 +244,26 @@ class RejectBody(BaseModel):
     comment: str | None = None
 
 
+class RoomCreateBody(BaseModel):
+    building_code: str = Field(min_length=1, max_length=32)
+    room_number: str = Field(min_length=1, max_length=32)
+    capacity: int = Field(gt=0)
+    floor: int | None = Field(default=None, ge=0, le=200)
+    has_projector: bool = False
+    has_whiteboard: bool = False
+    is_accessible: bool = False
+
+
+def _guess_room_floor(room_number: str, floor: int | None) -> int:
+    """Use explicit floor or first digit of the room number (RUZ-style)."""
+    if floor is not None:
+        return floor
+    digits = "".join(ch for ch in room_number if ch.isdigit())
+    if digits:
+        return int(digits[0])
+    return 1
+
+
 
 @app.get("/")
 def root():
@@ -938,6 +958,115 @@ def list_rooms(
             """,
             tuple(params),
         )
+
+
+@app.post("/api/v1/rooms")
+def create_room(body: RoomCreateBody, user: dict = Depends(get_current_user)):
+    """Create a room (or reactivate a soft-deleted one). Moderator/admin only."""
+    _require_moderator(user)
+    room_number = body.room_number.strip()
+    building_code = body.building_code.strip()
+    if not room_number or not building_code:
+        raise HTTPException(400, "building_code and room_number are required")
+    floor = _guess_room_floor(room_number, body.floor)
+
+    with get_conn() as conn:
+        building = fetch_one(
+            conn,
+            "SELECT id, code, name FROM buildings WHERE code = %s",
+            (building_code,),
+        )
+        if not building:
+            raise HTTPException(404, f"Building not found: {building_code}")
+
+        existing = fetch_one(
+            conn,
+            """
+            SELECT id, is_active FROM rooms
+            WHERE building_id = %s AND room_number = %s
+            """,
+            (building["id"], room_number),
+        )
+        if existing and existing["is_active"]:
+            raise HTTPException(
+                409,
+                "Room with this number already exists in the building",
+            )
+
+        if existing:
+            row = fetch_one(
+                conn,
+                """
+                UPDATE rooms
+                SET floor = %s, capacity = %s,
+                    has_projector = %s, has_whiteboard = %s,
+                    is_accessible = %s, is_active = true
+                WHERE id = %s
+                RETURNING id
+                """,
+                (
+                    floor,
+                    body.capacity,
+                    body.has_projector,
+                    body.has_whiteboard,
+                    body.is_accessible,
+                    existing["id"],
+                ),
+            )
+        else:
+            row = fetch_one(
+                conn,
+                """
+                INSERT INTO rooms (
+                    building_id, room_number, floor, capacity,
+                    has_projector, has_whiteboard, is_accessible, is_active
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, true)
+                RETURNING id
+                """,
+                (
+                    building["id"],
+                    room_number,
+                    floor,
+                    body.capacity,
+                    body.has_projector,
+                    body.has_whiteboard,
+                    body.is_accessible,
+                ),
+            )
+
+        return fetch_one(
+            conn,
+            """
+            SELECT r.id, b.code AS building_code, b.name AS building_name,
+                   r.room_number, r.floor, r.capacity,
+                   r.has_projector, r.has_whiteboard, r.is_accessible
+            FROM rooms r
+            JOIN buildings b ON b.id = r.building_id
+            WHERE r.id = %s
+            """,
+            (row["id"],),
+        )
+
+
+@app.delete("/api/v1/rooms/{room_id}")
+def delete_room(room_id: int, user: dict = Depends(get_current_user)):
+    """Soft-delete a room (is_active=false). Moderator/admin only."""
+    _require_moderator(user)
+    with get_conn() as conn:
+        room = fetch_one(
+            conn,
+            "SELECT id, is_active FROM rooms WHERE id = %s",
+            (room_id,),
+        )
+        if not room or not room["is_active"]:
+            raise HTTPException(404, "Room not found")
+        execute(
+            conn,
+            "UPDATE rooms SET is_active = false WHERE id = %s",
+            (room_id,),
+        )
+        return {"id": room_id, "is_active": False}
 
 
 @app.get("/api/v1/rooms/available")

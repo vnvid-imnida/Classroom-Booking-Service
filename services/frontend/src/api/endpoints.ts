@@ -235,9 +235,19 @@ export const roomsApi = {
         { params: { date } },
       )
       .then((r) => (Array.isArray(r.data) ? r.data : [])),
-  /** Room CRUD API lands later in admin-rooms step; until then expect 404. */
+  /** Create room (moderator/admin). Maps UI fields to backend body. */
   create: (payload: RoomCreatePayload) =>
-    apiClient.post<Room>('/api/v1/rooms', payload).then((r) => r.data),
+    apiClient
+      .post<BackendRoomRow>('/api/v1/rooms', {
+        building_code: payload.buildingCode ?? payload.building,
+        room_number: payload.number,
+        capacity: payload.capacity,
+        has_projector: payload.hasProjector,
+        has_whiteboard: payload.hasWhiteboard,
+        is_accessible: payload.isAccessible ?? false,
+      })
+      .then((r) => mapBackendRoom(r.data)),
+  /** Soft-delete room (moderator/admin). */
   remove: (id: string) =>
     apiClient.delete<void>(`/api/v1/rooms/${id}`).then(() => undefined),
 };
