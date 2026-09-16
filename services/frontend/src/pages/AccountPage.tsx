@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box, Paper, Typography, Stack, Avatar, Divider, Chip, Button,
   List, ListItem, ListItemText, Alert, CircularProgress, Tabs, Tab,
+  Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import { useAuth } from '../auth/AuthContext';
 import { bookingsApi } from '../api/endpoints';
@@ -49,6 +50,7 @@ export default function AccountPage() {
   const { user, logout } = useAuth();
   const qc = useQueryClient();
   const [tab, setTab] = useState(0);
+  const [confirmCancel, setConfirmCancel] = useState<Booking | null>(null);
   const scope: 'active' | 'archive' = tab === 0 ? 'active' : 'archive';
 
   const bookingsQuery = useQuery<Booking[]>({
@@ -60,6 +62,7 @@ export default function AccountPage() {
   const cancelMutation = useMutation({
     mutationFn: (item: Booking) => bookingsApi.cancel(item),
     onSuccess: () => {
+      setConfirmCancel(null);
       qc.invalidateQueries({ queryKey: ['my-bookings'] });
       qc.invalidateQueries({ queryKey: ['bookings'] });
     },
@@ -80,6 +83,9 @@ export default function AccountPage() {
   const cancelError = cancelMutation.isError
     ? cancelErrorRu(getErrorDetail(cancelMutation.error)) ?? 'Не удалось отменить.'
     : null;
+
+  const confirmKind =
+    confirmCancel?.kind === 'request' ? 'заявку' : 'бронирование';
 
   return (
     <Box>
@@ -112,6 +118,7 @@ export default function AccountPage() {
           onChange={(_, v: number) => {
             setTab(v);
             cancelMutation.reset();
+            setConfirmCancel(null);
           }}
           sx={{ mb: 1 }}
         >
@@ -177,7 +184,10 @@ export default function AccountPage() {
                   size="small"
                   color="error"
                   variant="outlined"
-                  onClick={() => cancelMutation.mutate(b)}
+                  onClick={() => {
+                    cancelMutation.reset();
+                    setConfirmCancel(b);
+                  }}
                   disabled={cancelMutation.isPending}
                   sx={{ ml: 2, flexShrink: 0 }}
                 >
@@ -188,6 +198,46 @@ export default function AccountPage() {
           ))}
         </List>
       </Paper>
+
+      <Dialog
+        open={!!confirmCancel}
+        onClose={cancelMutation.isPending ? undefined : () => setConfirmCancel(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Отмена</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Вы точно хотите отменить {confirmKind}
+            {confirmCancel ? <> «{confirmCancel.title}»?</> : '?'}
+          </Typography>
+          {confirmCancel && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Ауд. {confirmCancel.roomNumber ?? confirmCancel.roomId}
+              {' · '}
+              {formatMoscowRange(confirmCancel.start, confirmCancel.end)}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setConfirmCancel(null)}
+            disabled={cancelMutation.isPending}
+          >
+            Нет
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={!confirmCancel || cancelMutation.isPending}
+            onClick={() => {
+              if (confirmCancel) cancelMutation.mutate(confirmCancel);
+            }}
+          >
+            {cancelMutation.isPending ? 'Отмена…' : 'Да, отменить'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
