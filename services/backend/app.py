@@ -20,6 +20,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg2
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -241,6 +242,26 @@ class BookingRequestCreate(BaseModel):
 
 class RejectBody(BaseModel):
     comment: str | None = None
+
+
+class RoomCreateBody(BaseModel):
+    building_code: str = Field(min_length=1, max_length=32)
+    room_number: str = Field(min_length=1, max_length=32)
+    capacity: int = Field(gt=0)
+    floor: int | None = Field(default=None, ge=0, le=200)
+    has_projector: bool = False
+    has_whiteboard: bool = False
+    is_accessible: bool = False
+
+
+def _guess_room_floor(room_number: str, floor: int | None) -> int:
+    """Use explicit floor or first digit of the room number (RUZ-style)."""
+    if floor is not None:
+        return floor
+    digits = "".join(ch for ch in room_number if ch.isdigit())
+    if digits:
+        return int(digits[0])
+    return 1
 
 
 
@@ -939,19 +960,138 @@ def list_rooms(
         )
 
 
+@app.post("/api/v1/rooms")
+def create_room(body: RoomCreateBody, user: dict = Depends(get_current_user)):
+    """Create a room (or reactivate a soft-deleted one). Moderator/admin only."""
+    _require_moderator(user)
+    room_number = body.room_number.strip()
+    building_code = body.building_code.strip()
+    if not room_number or not building_code:
+        raise HTTPException(400, "building_code and room_number are required")
+    floor = _guess_room_floor(room_number, body.floor)
+
+    with get_conn() as conn:
+        building = fetch_one(
+            conn,
+            "SELECT id, code, name FROM buildings WHERE code = %s",
+            (building_code,),
+        )
+        if not building:
+            raise HTTPException(404, f"Building not found: {building_code}")
+
+        existing = fetch_one(
+            conn,
+            """
+            SELECT id, is_active FROM rooms
+            WHERE building_id = %s AND room_number = %s
+            """,
+            (building["id"], room_number),
+        )
+        if existing and existing["is_active"]:
+            raise HTTPException(
+                409,
+                "Room with this number already exists in the building",
+            )
+
+        if existing:
+            row = fetch_one(
+                conn,
+                """
+                UPDATE rooms
+                SET floor = %s, capacity = %s,
+                    has_projector = %s, has_whiteboard = %s,
+                    is_accessible = %s, is_active = true
+                WHERE id = %s
+                RETURNING id
+                """,
+                (
+                    floor,
+                    body.capacity,
+                    body.has_projector,
+                    body.has_whiteboard,
+                    body.is_accessible,
+                    existing["id"],
+                ),
+            )
+        else:
+            row = fetch_one(
+                conn,
+                """
+                INSERT INTO rooms (
+                    building_id, room_number, floor, capacity,
+                    has_projector, has_whiteboard, is_accessible, is_active
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, true)
+                RETURNING id
+                """,
+                (
+                    building["id"],
+                    room_number,
+                    floor,
+                    body.capacity,
+                    body.has_projector,
+                    body.has_whiteboard,
+                    body.is_accessible,
+                ),
+            )
+
+        return fetch_one(
+            conn,
+            """
+            SELECT r.id, b.code AS building_code, b.name AS building_name,
+                   r.room_number, r.floor, r.capacity,
+                   r.has_projector, r.has_whiteboard, r.is_accessible
+            FROM rooms r
+            JOIN buildings b ON b.id = r.building_id
+            WHERE r.id = %s
+            """,
+            (row["id"],),
+        )
+
+
+@app.delete("/api/v1/rooms/{room_id}")
+def delete_room(room_id: int, user: dict = Depends(get_current_user)):
+    """Soft-delete a room (is_active=false). Moderator/admin only."""
+    _require_moderator(user)
+    with get_conn() as conn:
+        room = fetch_one(
+            conn,
+            "SELECT id, is_active FROM rooms WHERE id = %s",
+            (room_id,),
+        )
+        if not room or not room["is_active"]:
+            raise HTTPException(404, "Room not found")
+        execute(
+            conn,
+            "UPDATE rooms SET is_active = false WHERE id = %s",
+            (room_id,),
+        )
+        return {"id": room_id, "is_active": False}
+
+
 @app.get("/api/v1/rooms/available")
 def available_rooms(
     user: dict = Depends(get_current_user),
     starts_at: str = Query(...),
     ends_at: str = Query(...),
     building_code: str | None = None,
+    min_capacity: int | None = None,
+    has_projector: bool | None = None,
+    has_whiteboard: bool | None = None,
+    is_accessible: bool | None = None,
 ):
     """List rooms free for the given time interval.
+
+    Excludes rooms with an ACTIVE booking or PENDING request overlapping the interval.
 
     Args:
         starts_at: Interval start (ISO-8601).
         ends_at: Interval end (ISO-8601).
         building_code: Optional building filter.
+        min_capacity: Optional minimum capacity.
+        has_projector: Optional projector filter.
+        has_whiteboard: Optional whiteboard filter.
+        is_accessible: Optional accessibility filter.
 
     Raises:
         HTTPException: 400 when ``ends_at`` is not after ``starts_at``.
@@ -966,7 +1106,19 @@ def available_rooms(
     if building_code:
         clauses.append("b.code = %s")
         params.append(building_code)
-    params.extend([start_dt, end_dt])
+    if min_capacity is not None:
+        clauses.append("r.capacity >= %s")
+        params.append(min_capacity)
+    if has_projector is not None:
+        clauses.append("r.has_projector = %s")
+        params.append(has_projector)
+    if has_whiteboard is not None:
+        clauses.append("r.has_whiteboard = %s")
+        params.append(has_whiteboard)
+    if is_accessible is not None:
+        clauses.append("r.is_accessible = %s")
+        params.append(is_accessible)
+    params.extend([start_dt, end_dt, start_dt, end_dt])
     where = " AND ".join(clauses)
 
     with get_conn() as conn:
@@ -974,7 +1126,8 @@ def available_rooms(
             conn,
             f"""
             SELECT r.id, b.code AS building_code, b.name AS building_name,
-                   r.room_number, r.floor, r.capacity
+                   r.room_number, r.floor, r.capacity,
+                   r.has_projector, r.has_whiteboard, r.is_accessible
             FROM rooms r
             JOIN buildings b ON b.id = r.building_id
             WHERE {where}
@@ -983,6 +1136,13 @@ def available_rooms(
                   WHERE bk.room_id = r.id
                     AND bk.status = 'ACTIVE'
                     AND tstzrange(bk.starts_at, bk.ends_at, '[)') &&
+                        tstzrange(%s, %s, '[)')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM booking_requests br
+                  WHERE br.room_id = r.id
+                    AND br.status = 'PENDING'
+                    AND tstzrange(br.starts_at, br.ends_at, '[)') &&
                         tstzrange(%s, %s, '[)')
               )
             ORDER BY b.code, r.room_number
@@ -1001,20 +1161,33 @@ def event_purposes(user: dict = Depends(get_current_user)):
         )
 
 
+try:
+    _MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+except ZoneInfoNotFoundError:
+    _MOSCOW_TZ = timezone(timedelta(hours=3))
+
+
+def _moscow_day_bounds(date: str) -> tuple[datetime, datetime]:
+    """Return UTC [start, end) for a calendar day in Europe/Moscow."""
+    day = datetime.fromisoformat(date).date()
+    start_local = datetime(day.year, day.month, day.day, tzinfo=_MOSCOW_TZ)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
 @app.get("/api/v1/rooms/{room_id}/occupancy")
 def room_occupancy(
     room_id: int,
     user: dict = Depends(get_current_user),
     date: str = Query(..., description="YYYY-MM-DD"),
 ):
-    """Return bookings and pending requests overlapping a room on one day.
+    """Return bookings and pending requests overlapping a room on one Moscow day.
 
     Args:
         room_id: Room primary key.
-        date: Calendar day in ``YYYY-MM-DD`` format.
+        date: Calendar day in ``YYYY-MM-DD`` format (Europe/Moscow).
     """
-    day_start = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = _moscow_day_bounds(date)
     with get_conn() as conn:
         return fetch_all(
             conn,
@@ -1288,13 +1461,26 @@ def _require_moderator(user: dict) -> None:
 
 
 @app.get("/api/v1/moderation/requests")
-def moderation_queue(user: dict = Depends(get_current_user)):
-    """List pending booking requests for moderators."""
+def moderation_queue(
+    user: dict = Depends(get_current_user),
+    scope: Literal["queue", "all"] = Query(
+        "queue",
+        description="queue = PENDING only; all = submitted requests for admin panel",
+    ),
+):
+    """List booking requests for moderators (pending queue or full history)."""
     _require_moderator(user)
+    if scope == "all":
+        status_filter = "br.status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED')"
+        order_by = "br.submitted_at DESC NULLS LAST, br.created_at DESC"
+    else:
+        status_filter = "br.status = 'PENDING'"
+        order_by = "br.submitted_at ASC"
+
     with get_conn() as conn:
         return fetch_all(
             conn,
-            """
+            f"""
             SELECT br.id::text, br.title, br.starts_at, br.ends_at, br.status,
                    u.full_name AS requester_name, u.email AS requester_email,
                    u.telegram_username,
@@ -1305,8 +1491,9 @@ def moderation_queue(user: dict = Depends(get_current_user)):
             JOIN rooms r ON r.id = br.room_id
             JOIN buildings b ON b.id = r.building_id
             JOIN event_purposes ep ON ep.id = br.purpose_id
-            WHERE br.status = 'PENDING'
-            ORDER BY br.submitted_at ASC
+            WHERE {status_filter}
+            ORDER BY {order_by}
+            LIMIT 100
             """,
         )
 

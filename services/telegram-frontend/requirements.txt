@@ -1,3 +1,4 @@
 aiogram==3.15.0
 httpx==0.28.1
+tzdata==2025.1
 # aiohttp подтягивается aiogram (<3.11); для /health используется та же версия

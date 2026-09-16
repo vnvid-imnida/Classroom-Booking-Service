@@ -1,6 +1,8 @@
 import { apiClient } from './client';
 import type {
   Booking,
+  BookingRequestCreatePayload,
+  EventPurpose,
   LoginPayload,
   RegisterPayload,
   RegisterResult,
@@ -11,13 +13,7 @@ import type {
   VerifyEmailPayload,
 } from '../types';
 import { roleForEmail } from '../utils/emailDomains';
-import {
-  isMockMode,
-  isTestCredentials,
-  mockAuthApi,
-  mockBookingsApi,
-  mockRoomsApi,
-} from './mock';
+import { moscowDateTimeToUtcIso } from '../utils/dateTime';
 
 type BackendUser = {
   id: string;
@@ -75,28 +71,35 @@ type BackendBookingRow = {
   building_code?: string;
   room_number?: string;
   requester_name?: string;
+  purpose_name?: string;
 };
 
 function mapBookingStatus(status: string): Booking['status'] {
   const s = status.toUpperCase();
-  if (s === 'ACTIVE' || s === 'APPROVED') return 'approved';
-  if (s === 'PENDING' || s === 'DRAFT') return 'pending';
+  if (s === 'DRAFT') return 'draft';
+  if (s === 'ACTIVE' || s === 'APPROVED' || s === 'COMPLETED') return 'approved';
+  if (s === 'PENDING') return 'pending';
   if (s === 'REJECTED') return 'rejected';
-  if (s === 'CANCELLED' || s === 'CANCELED') return 'cancelled';
+  if (s === 'CANCELLED' || s === 'CANCELED' || s === 'RESCHEDULED') return 'cancelled';
   return 'pending';
 }
 
-function mapBackendBooking(row: BackendBookingRow): Booking {
+function mapBackendBooking(row: BackendBookingRow, kind: Booking['kind']): Booking {
+  const roomLabel =
+    row.building_code && row.room_number
+      ? `${row.building_code}-${row.room_number}`
+      : row.room_number;
   return {
     id: row.id,
     roomId: row.room_number ?? '',
-    roomNumber: row.room_number,
+    roomNumber: roomLabel,
     userId: '',
     userName: row.requester_name,
     title: row.title,
     start: row.starts_at,
     end: row.ends_at,
     status: mapBookingStatus(row.status),
+    kind,
   };
 }
 
@@ -107,7 +110,7 @@ function asBookingRows(data: unknown): BackendBookingRow[] {
 type BackendRoomRow = {
   id: number;
   building_code: string;
-  building_name: string;
+  building_name?: string;
   room_number: string;
   capacity: number;
   has_projector: boolean;
@@ -116,32 +119,44 @@ type BackendRoomRow = {
 };
 
 function mapBackendRoom(row: BackendRoomRow): Room {
+  const hasWhiteboard = Boolean(row.has_whiteboard);
   return {
     id: String(row.id),
     number: row.room_number,
     building: row.building_name || row.building_code,
+    buildingCode: row.building_code,
     capacity: row.capacity,
     hasProjector: row.has_projector,
-    hasComputers: row.has_computers ?? false,
+    hasWhiteboard,
+    hasComputers: hasWhiteboard,
   };
 }
+
+type BackendBuildingRow = {
+  id: number;
+  code: string;
+  name: string;
+  address?: string | null;
+};
+
+export type BuildingOption = {
+  code: string;
+  name: string;
+};
 
 function asRoomRows(data: unknown): BackendRoomRow[] {
   return Array.isArray(data) ? data : [];
 }
 
 export const authApi = {
-  login: (payload: LoginPayload) => {
-    if (isTestCredentials(payload).ok) {
-      return mockAuthApi.login(payload);
-    }
-    return apiClient
+  login: (payload: LoginPayload) =>
+    apiClient
       .post<BackendAuthResponse>('/api/v1/auth/login', {
         email: payload.email.trim().toLowerCase(),
         password: payload.password,
+        captcha_token: payload.captchaToken,
       })
-      .then((r) => mapAuthResponse(r.data));
-  },
+      .then((r) => mapAuthResponse(r.data)),
   register: (payload: RegisterPayload) =>
     apiClient
       .post<RegisterResult & { verification_required?: boolean }>(
@@ -164,41 +179,77 @@ export const authApi = {
         code: payload.code,
       })
       .then((r) => mapAuthResponse(r.data)),
-  me: () => {
-    if (isMockMode()) return mockAuthApi.me();
-    return apiClient.get<BackendUser>('/api/v1/me').then((r) => mapUser(r.data));
-  },
+  me: () => apiClient.get<BackendUser>('/api/v1/me').then((r) => mapUser(r.data)),
+};
+
+export const buildingsApi = {
+  list: () =>
+    apiClient.get<BackendBuildingRow[]>('/api/v1/buildings').then((r) =>
+      (Array.isArray(r.data) ? r.data : []).map(
+        (b): BuildingOption => ({
+          code: b.code,
+          name: b.name || b.code,
+        }),
+      ),
+    ),
 };
 
 export const roomsApi = {
   search: (filters: RoomSearchFilters) => {
-    if (isMockMode()) return mockRoomsApi.search(filters);
+    const hasSlot = Boolean(filters.date && filters.fromTime && filters.toTime);
+    if (hasSlot) {
+      return apiClient
+        .get<BackendRoomRow[]>('/api/v1/rooms/available', {
+          params: {
+            starts_at: moscowDateTimeToUtcIso(filters.date!, filters.fromTime!),
+            ends_at: moscowDateTimeToUtcIso(filters.date!, filters.toTime!),
+            building_code: filters.building,
+            min_capacity: filters.minCapacity,
+            has_projector: filters.hasProjector,
+            has_whiteboard: filters.hasWhiteboard,
+          },
+        })
+        .then((r) => asRoomRows(r.data).map(mapBackendRoom));
+    }
     return apiClient
       .get<BackendRoomRow[]>('/api/v1/rooms', {
         params: {
           building_code: filters.building,
           min_capacity: filters.minCapacity,
           has_projector: filters.hasProjector,
+          has_whiteboard: filters.hasWhiteboard,
         },
       })
       .then((r) => asRoomRows(r.data).map(mapBackendRoom));
   },
-  list: () => {
-    if (isMockMode()) return mockRoomsApi.list();
-    return apiClient
+  list: () =>
+    apiClient
       .get<BackendRoomRow[]>('/api/v1/rooms')
-      .then((r) => asRoomRows(r.data).map(mapBackendRoom));
-  },
+      .then((r) => asRoomRows(r.data).map(mapBackendRoom)),
   getById: (id: string) =>
     apiClient.get<BackendRoomRow>(`/api/v1/rooms/${id}`).then((r) => mapBackendRoom(r.data)),
-  create: (payload: RoomCreatePayload) => {
-    if (isMockMode()) return mockRoomsApi.create(payload);
-    return apiClient.post<Room>('/rooms', payload).then((r) => r.data);
-  },
-  remove: (id: string) => {
-    if (isMockMode()) return mockRoomsApi.remove(id);
-    return apiClient.delete<void>(`/rooms/${id}`).then(() => undefined);
-  },
+  occupancy: (id: string, date: string) =>
+    apiClient
+      .get<Array<{ starts_at: string; ends_at: string; title?: string; status?: string }>>(
+        `/api/v1/rooms/${id}/occupancy`,
+        { params: { date } },
+      )
+      .then((r) => (Array.isArray(r.data) ? r.data : [])),
+  /** Create room (moderator/admin). Maps UI fields to backend body. */
+  create: (payload: RoomCreatePayload) =>
+    apiClient
+      .post<BackendRoomRow>('/api/v1/rooms', {
+        building_code: payload.buildingCode ?? payload.building,
+        room_number: payload.number,
+        capacity: payload.capacity,
+        has_projector: payload.hasProjector,
+        has_whiteboard: payload.hasWhiteboard,
+        is_accessible: payload.isAccessible ?? false,
+      })
+      .then((r) => mapBackendRoom(r.data)),
+  /** Soft-delete room (moderator/admin). */
+  remove: (id: string) =>
+    apiClient.delete<void>(`/api/v1/rooms/${id}`).then(() => undefined),
 };
 
 export const bookingsApi = {
@@ -208,50 +259,63 @@ export const bookingsApi = {
     userId?: string;
     roomId?: string;
     admin?: boolean;
+    scope?: 'active' | 'archive';
   }) => {
-    if (isMockMode()) return mockBookingsApi.list(params);
-
     if (params?.admin) {
-      const res = await apiClient.get<BackendBookingRow[]>('/api/v1/moderation/requests');
-      return asBookingRows(res.data).map(mapBackendBooking);
+      const res = await apiClient.get<BackendBookingRow[]>('/api/v1/moderation/requests', {
+        params: { scope: 'all' },
+      });
+      return asBookingRows(res.data).map((row) => mapBackendBooking(row, 'request'));
     }
 
+    const scope = params?.scope ?? 'active';
     const [bookingsRes, requestsRes] = await Promise.all([
       apiClient.get<BackendBookingRow[]>('/api/v1/bookings/me', {
-        params: { scope: 'active' },
+        params: { scope },
       }),
       apiClient.get<BackendBookingRow[]>('/api/v1/booking-requests/me', {
-        params: { scope: 'active' },
+        params: { scope },
       }),
     ]);
 
     return [
-      ...asBookingRows(bookingsRes.data).map(mapBackendBooking),
-      ...asBookingRows(requestsRes.data).map(mapBackendBooking),
+      ...asBookingRows(bookingsRes.data).map((row) => mapBackendBooking(row, 'booking')),
+      ...asBookingRows(requestsRes.data).map((row) => mapBackendBooking(row, 'request')),
     ];
   },
-  create: (payload: Omit<Booking, 'id' | 'status'>) => {
-    if (isMockMode()) return mockBookingsApi.create(payload);
-    return apiClient.post<Booking>('/bookings', payload).then((r) => r.data);
+  create: (payload: BookingRequestCreatePayload) =>
+    apiClient
+      .post<{ id: string; status: string }>('/api/v1/booking-requests', {
+        ...payload,
+        action: payload.action ?? 'CREATE',
+      })
+      .then((r) => r.data),
+  submit: (id: string) =>
+    apiClient
+      .post<{ id: string; status: string }>(`/api/v1/booking-requests/${id}/submit`)
+      .then((r) => r.data),
+  cancel: (item: Pick<Booking, 'id' | 'kind'>) => {
+    const path =
+      item.kind === 'request'
+        ? `/api/v1/booking-requests/${item.id}/cancel`
+        : `/api/v1/bookings/${item.id}/cancel`;
+    return apiClient.post<void>(path).then(() => undefined);
   },
-  cancel: (id: string) => {
-    if (isMockMode()) return mockBookingsApi.cancel(id);
-    return apiClient
-      .post<void>(`/api/v1/bookings/${id}/cancel`)
-      .then(() => undefined);
-  },
-  approve: (id: string) => {
-    if (isMockMode()) return mockBookingsApi.approve(id);
-    return apiClient
+  approve: (id: string) =>
+    apiClient
       .post<void>(`/api/v1/moderation/requests/${id}/approve`)
-      .then(() => undefined);
-  },
-  reject: (id: string) => {
-    if (isMockMode()) return mockBookingsApi.reject(id);
-    return apiClient
+      .then(() => undefined),
+  reject: (id: string) =>
+    apiClient
       .post<void>(`/api/v1/moderation/requests/${id}/reject`, {
         comment: 'Отклонено модератором',
       })
-      .then(() => undefined);
-  },
+      .then(() => undefined),
+};
+
+export const purposesApi = {
+  list: () =>
+    apiClient
+      .get<EventPurpose[]>('/api/v1/event-purposes')
+      .then((r) => (Array.isArray(r.data) ? r.data : [])),
 };

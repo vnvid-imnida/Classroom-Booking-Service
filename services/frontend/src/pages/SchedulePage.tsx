@@ -11,6 +11,7 @@ import {
 import { bookingsApi } from '../api/endpoints';
 import type { Booking } from '../types';
 import { STATUS_LABELS, STATUS_COLORS } from '../types';
+import { formatMoscowDateTime } from '../utils/dateTime';
 
 export default function SchedulePage() {
   const [selected, setSelected] = useState<Booking | null>(null);
@@ -44,6 +45,13 @@ export default function SchedulePage() {
       {isError && <Alert severity="warning" sx={{ mb: 2 }}>
         Не удалось загрузить бронирования. Календарь показан без данных.
       </Alert>}
+
+      {!isLoading && !isError && (bookings?.length ?? 0) === 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          На календаре только ваши заявки и брони. Одобренная заявка студента видна
+          под его аккаунтом (личный кабинет / расписание), а не у модератора.
+        </Alert>
+      )}
 
       <Paper sx={{ p: 2 }}>
         <FullCalendar
@@ -82,10 +90,10 @@ export default function SchedulePage() {
                 <strong>Аудитория:</strong> {selected.roomNumber ?? selected.roomId}
               </Typography>
               <Typography variant="body2">
-                <strong>Начало:</strong> {new Date(selected.start).toLocaleString('ru-RU')}
+                <strong>Начало:</strong> {formatMoscowDateTime(selected.start)}
               </Typography>
               <Typography variant="body2">
-                <strong>Конец:</strong> {new Date(selected.end).toLocaleString('ru-RU')}
+                <strong>Конец:</strong> {formatMoscowDateTime(selected.end)}
               </Typography>
               <Box>
                 <strong>Статус: </strong>

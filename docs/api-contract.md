@@ -85,7 +85,7 @@ Legacy Telegram register:
 |--------|------|-------------|
 | GET | `/api/v1/buildings` | List buildings |
 | GET | `/api/v1/rooms` | Filter rooms (`building_code`, `min_capacity`, `has_projector`, `has_whiteboard`, `is_accessible`) |
-| GET | `/api/v1/rooms/available` | Free rooms in interval (`starts_at`, `ends_at`, optional `building_code`) |
+| GET | `/api/v1/rooms/available` | Free rooms in interval (`starts_at`, `ends_at`; optional `building_code`, `min_capacity`, `has_projector`, `has_whiteboard`, `is_accessible`). Excludes ACTIVE bookings and PENDING requests overlapping the interval. |
 | GET | `/api/v1/event-purposes` | Event purpose dictionary |
 | GET | `/api/v1/rooms/{room_id}/occupancy` | Active bookings + pending requests for room (`date=YYYY-MM-DD`) |
 
@@ -136,7 +136,7 @@ Create body:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/moderation/requests` | `PENDING` queue |
+| GET | `/api/v1/moderation/requests` | `scope=queue` (default): `PENDING`; `scope=all`: pending + approved/rejected/cancelled for admin UI |
 | POST | `/api/v1/moderation/requests/{id}/approve` | Approve → create `bookings` row |
 | POST | `/api/v1/moderation/requests/{id}/reject` | Reject with optional `comment` |
 

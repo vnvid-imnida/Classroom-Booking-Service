@@ -11,12 +11,19 @@ export interface Room {
   id: string;
   number: string;
   building: string;
+  /** Building code for API filters (e.g. ГЗ, 3). */
+  buildingCode?: string;
   capacity: number;
   hasProjector: boolean;
-  hasComputers: boolean;
+  hasWhiteboard: boolean;
+  isAccessible?: boolean;
+  /** @deprecated use hasWhiteboard — kept for older UI bits */
+  hasComputers?: boolean;
 }
 
-export type BookingStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type BookingStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'draft';
+
+export type BookingKind = 'booking' | 'request';
 
 export interface Booking {
   id: string;
@@ -28,6 +35,8 @@ export interface Booking {
   start: string; // ISO datetime
   end: string;   // ISO datetime
   status: BookingStatus;
+  /** Confirmed booking vs booking request (moderation pipeline). */
+  kind: BookingKind;
 }
 
 export interface LoginPayload {
@@ -60,10 +69,11 @@ export interface RegisterPayload {
 }
 
 export interface RoomSearchFilters {
+  /** Building code from API (`ГЗ`, `3`), not display name. */
   building?: string;
   minCapacity?: number;
   hasProjector?: boolean;
-  hasComputers?: boolean;
+  hasWhiteboard?: boolean;
   date?: string;
   fromTime?: string;
   toTime?: string;
@@ -71,15 +81,34 @@ export interface RoomSearchFilters {
 
 export type RoomCreatePayload = Omit<Room, 'id'>;
 
+export interface EventPurpose {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface BookingRequestCreatePayload {
+  room_id: number;
+  purpose_id: number;
+  title: string;
+  description?: string;
+  starts_at: string;
+  ends_at: string;
+  action?: 'CREATE' | 'RESCHEDULE';
+  target_booking_id?: string;
+}
+
 // Локализация
 export const STATUS_LABELS: Record<BookingStatus, string> = {
+  draft: 'Черновик',
   approved: 'Подтверждено',
-  pending: 'Ожидает',
+  pending: 'На модерации',
   rejected: 'Отклонено',
   cancelled: 'Отменено',
 };
 
 export const STATUS_COLORS: Record<BookingStatus, string> = {
+  draft: '#757575',
   approved: '#2E7D32',
   pending: '#ED6C02',
   rejected: '#C62828',

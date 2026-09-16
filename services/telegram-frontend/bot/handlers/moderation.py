@@ -8,16 +8,15 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.api.client import BackendError
 from bot.handlers.common import client_from, client_from_callback
-from bot.keyboards import PURPOSE_LABELS, moderation_kb
+from bot.keyboards import PURPOSE_LABELS, format_moscow_dt, moderation_kb
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
 def _fmt_dt(value: str) -> str:
-    """Format API datetime for moderator messages."""
-    return str(value).replace("T", " ")[:16] if value else "—"
-
+    """Format API datetime for moderator messages (Moscow time)."""
+    return format_moscow_dt(value)
 
 def _requester_line(item: dict) -> str:
     """Build «От:» line without showing literal None."""

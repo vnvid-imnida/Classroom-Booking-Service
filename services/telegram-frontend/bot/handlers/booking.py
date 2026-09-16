@@ -16,6 +16,7 @@ from bot.handlers.common import (
     send_flow_message,
 )
 from bot.keyboards import (
+    MOSCOW_TZ,
     buildings_kb,
     confirm_kb,
     date_kb_filtered,
@@ -32,9 +33,17 @@ router = Router()
 
 
 def _iso_range(date_str: str, start_hm: str, end_hm: str) -> tuple[str, str]:
-    """Convert local slot times on a date to UTC ISO strings for the API."""
-    starts_at = datetime.fromisoformat(f"{date_str}T{start_hm}:00").replace(tzinfo=timezone.utc)
-    ends_at = datetime.fromisoformat(f"{date_str}T{end_hm}:00").replace(tzinfo=timezone.utc)
+    """Convert Moscow pair times on a date to UTC ISO strings for the API."""
+    starts_at = (
+        datetime.fromisoformat(f"{date_str}T{start_hm}:00")
+        .replace(tzinfo=MOSCOW_TZ)
+        .astimezone(timezone.utc)
+    )
+    ends_at = (
+        datetime.fromisoformat(f"{date_str}T{end_hm}:00")
+        .replace(tzinfo=MOSCOW_TZ)
+        .astimezone(timezone.utc)
+    )
     return starts_at.isoformat(), ends_at.isoformat()
 
 

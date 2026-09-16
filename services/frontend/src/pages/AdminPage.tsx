@@ -4,20 +4,33 @@ import {
   Box, Paper, Typography, Tab, Tabs, Stack, Chip, Button,
   Table, TableHead, TableRow, TableCell, TableBody, TableContainer,
   Alert, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, FormControlLabel, Checkbox,
+  TextField, FormControlLabel, Checkbox, FormControl, InputLabel, Select, MenuItem,
 } from '@mui/material';
-import { bookingsApi, roomsApi } from '../api/endpoints';
+import { bookingsApi, buildingsApi, roomsApi } from '../api/endpoints';
 import type { Booking, Room, RoomCreatePayload } from '../types';
 import { STATUS_LABELS, STATUS_COLORS } from '../types';
+import { formatMoscowDateTime } from '../utils/dateTime';
+import { getErrorDetail } from '../utils/apiError';
 
 function formatDateTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString('ru-RU');
-  } catch {
-    return iso;
+  return formatMoscowDateTime(iso);
+}
+
+function roomApiErrorRu(detail: string | undefined, fallback: string): string {
+  if (!detail) return fallback;
+  if (detail.includes('already exists')) {
+    return 'Аудитория с таким номером уже есть в этом корпусе.';
   }
+  if (detail.includes('Building not found')) {
+    return 'Корпус не найден. Выберите корпус из списка.';
+  }
+  if (detail.includes('Moderator role')) {
+    return 'Нужна роль модератора или администратора.';
+  }
+  if (detail === 'Room not found') {
+    return 'Аудитория не найдена или уже удалена.';
+  }
+  return detail;
 }
 
 export default function AdminPage() {
@@ -171,23 +184,32 @@ function BookingsTab() {
 function RoomsTab() {
   const qc = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Room | null>(null);
 
   const roomsQuery = useQuery<Room[]>({
     queryKey: ['admin-rooms'],
     queryFn: () => roomsApi.list(),
   });
 
+  const invalidateRooms = () => {
+    qc.invalidateQueries({ queryKey: ['admin-rooms'] });
+    qc.invalidateQueries({ queryKey: ['rooms'] });
+  };
+
   const createMut = useMutation({
     mutationFn: (payload: RoomCreatePayload) => roomsApi.create(payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-rooms'] });
+      invalidateRooms();
       setDialogOpen(false);
     },
   });
 
   const removeMut = useMutation({
     mutationFn: (id: string) => roomsApi.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-rooms'] }),
+    onSuccess: () => {
+      setConfirmDelete(null);
+      invalidateRooms();
+    },
   });
 
   if (roomsQuery.isError) {
@@ -202,15 +224,31 @@ function RoomsTab() {
   }
 
   const rooms: Room[] = roomsQuery.data ?? [];
+  const removeError = removeMut.isError
+    ? roomApiErrorRu(getErrorDetail(removeMut.error), 'Не удалось удалить аудиторию.')
+    : null;
 
   return (
     <Paper>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ p: 2 }}>
         <Typography variant="h6">Аудитории ({rooms.length})</Typography>
-        <Button variant="contained" onClick={() => setDialogOpen(true)}>
+        <Button
+          variant="contained"
+          onClick={() => {
+            createMut.reset();
+            setDialogOpen(true);
+          }}
+        >
           + Добавить аудиторию
         </Button>
       </Stack>
+
+      {removeError && (
+        <Alert severity="error" sx={{ mx: 2, mb: 1 }} onClose={() => removeMut.reset()}>
+          {removeError}
+        </Alert>
+      )}
+
       <TableContainer>
         <Table size="small">
           <TableHead>
@@ -231,7 +269,7 @@ function RoomsTab() {
                 <TableCell>
                   <Stack direction="row" spacing={1}>
                     {r.hasProjector ? <Chip size="small" label="Проектор" /> : null}
-                    {r.hasComputers ? <Chip size="small" label="Компьютеры" /> : null}
+                    {r.hasWhiteboard ? <Chip size="small" label="Доска" /> : null}
                   </Stack>
                 </TableCell>
                 <TableCell align="right">
@@ -240,7 +278,10 @@ function RoomsTab() {
                     color="error"
                     variant="outlined"
                     disabled={removeMut.isPending}
-                    onClick={() => removeMut.mutate(r.id)}
+                    onClick={() => {
+                      removeMut.reset();
+                      setConfirmDelete(r);
+                    }}
                   >
                     Удалить
                   </Button>
@@ -265,8 +306,45 @@ function RoomsTab() {
         onClose={() => setDialogOpen(false)}
         onSubmit={(payload) => createMut.mutate(payload)}
         submitting={createMut.isPending}
-        error={createMut.isError ? 'Не удалось создать аудиторию.' : null}
+        error={
+          createMut.isError
+            ? roomApiErrorRu(getErrorDetail(createMut.error), 'Не удалось создать аудиторию.')
+            : null
+        }
       />
+
+      <Dialog
+        open={!!confirmDelete}
+        onClose={removeMut.isPending ? undefined : () => setConfirmDelete(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Удаление аудитории</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Вы точно хотите удалить аудиторию
+            {confirmDelete ? <> «{confirmDelete.number}» ({confirmDelete.building})?</> : '?'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Аудитория исчезнет из поиска; связанные заявки и брони в истории сохранятся.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDelete(null)} disabled={removeMut.isPending}>
+            Нет
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={!confirmDelete || removeMut.isPending}
+            onClick={() => {
+              if (confirmDelete) removeMut.mutate(confirmDelete.id);
+            }}
+          >
+            {removeMut.isPending ? 'Удаление…' : 'Да, удалить'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 }
@@ -281,37 +359,63 @@ function NewRoomDialog({
   error: string | null;
 }) {
   const [number, setNumber] = useState('');
-  const [building, setBuilding] = useState('');
+  const [buildingCode, setBuildingCode] = useState('');
   const [capacity, setCapacity] = useState<number | ''>('');
   const [hasProjector, setHasProjector] = useState(false);
-  const [hasComputers, setHasComputers] = useState(false);
+  const [hasWhiteboard, setHasWhiteboard] = useState(false);
+  const [isAccessible, setIsAccessible] = useState(false);
+
+  const buildingsQuery = useQuery({
+    queryKey: ['buildings'],
+    queryFn: () => buildingsApi.list(),
+    enabled: open,
+  });
 
   const reset = () => {
-    setNumber(''); setBuilding(''); setCapacity('');
-    setHasProjector(false); setHasComputers(false);
+    setNumber('');
+    setBuildingCode('');
+    setCapacity('');
+    setHasProjector(false);
+    setHasWhiteboard(false);
+    setIsAccessible(false);
   };
 
-  const canSubmit = !!number.trim() && !!building.trim() && typeof capacity === 'number' && capacity > 0;
+  const canSubmit =
+    !!number.trim() &&
+    !!buildingCode &&
+    typeof capacity === 'number' &&
+    capacity > 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
+    const building = (buildingsQuery.data ?? []).find((b) => b.code === buildingCode);
     onSubmit({
       number: number.trim(),
-      building: building.trim(),
+      building: building?.name ?? buildingCode,
+      buildingCode,
       capacity: capacity as number,
       hasProjector,
-      hasComputers,
+      hasWhiteboard,
+      isAccessible,
     });
   };
 
+  const handleClose = () => {
+    onClose();
+    reset();
+  };
+
   return (
-    <Dialog open={open} onClose={() => { onClose(); reset(); }} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={submitting ? undefined : handleClose} fullWidth maxWidth="sm">
       <form onSubmit={handleSubmit}>
         <DialogTitle>Новая аудитория</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ mt: 1 }}>
             {error ? <Alert severity="error">{error}</Alert> : null}
+            {buildingsQuery.isError && (
+              <Alert severity="warning">Не удалось загрузить корпуса.</Alert>
+            )}
             <TextField
               label="Номер аудитории"
               value={number}
@@ -319,14 +423,28 @@ function NewRoomDialog({
               required
               autoFocus
               fullWidth
+              helperText="Этаж возьмём из первой цифры номера, если не указать иначе"
             />
-            <TextField
-              label="Корпус"
-              value={building}
-              onChange={(e) => setBuilding(e.target.value)}
-              required
-              fullWidth
-            />
+            <FormControl fullWidth required>
+              <InputLabel id="new-room-building">Корпус</InputLabel>
+              <Select
+                labelId="new-room-building"
+                label="Корпус"
+                value={buildingCode || 'none'}
+                onChange={(e) =>
+                  setBuildingCode(e.target.value === 'none' ? '' : e.target.value)
+                }
+              >
+                <MenuItem value="none" disabled>
+                  Выберите корпус
+                </MenuItem>
+                {(buildingsQuery.data ?? []).map((b) => (
+                  <MenuItem key={b.code} value={b.code}>
+                    {b.name} ({b.code})
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <TextField
               type="number"
               label="Вместимость"
@@ -341,13 +459,17 @@ function NewRoomDialog({
               label="Проектор"
             />
             <FormControlLabel
-              control={<Checkbox checked={hasComputers} onChange={(e) => setHasComputers(e.target.checked)} />}
-              label="Компьютеры"
+              control={<Checkbox checked={hasWhiteboard} onChange={(e) => setHasWhiteboard(e.target.checked)} />}
+              label="Доска"
+            />
+            <FormControlLabel
+              control={<Checkbox checked={isAccessible} onChange={(e) => setIsAccessible(e.target.checked)} />}
+              label="Доступна для маломобильных"
             />
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => { onClose(); reset(); }}>Отмена</Button>
+          <Button onClick={handleClose} disabled={submitting}>Отмена</Button>
           <Button type="submit" variant="contained" disabled={!canSubmit || submitting}>
             {submitting ? 'Создание...' : 'Создать'}
           </Button>

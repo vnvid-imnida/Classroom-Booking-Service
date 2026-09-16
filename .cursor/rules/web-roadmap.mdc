@@ -1,0 +1,21 @@
+---
+description: Web frontend roadmap — single branch/PR for web work
+alwaysApply: true
+---
+
+# Web roadmap (spbpu-booking)
+
+Ship web work on **one branch** → **one PR** to `develop`.
+Current branch: `feature/web/real-api` (keep using it for all steps below).
+Commit per step; open/update a single PR when ready.
+
+## Steps (same branch)
+
+0. ~~real API / no mock / Moscow TZ~~ (done)
+1. ~~search by free slot~~ (done)
+2. ~~account — cabinet active/archive + cancel~~ (done)
+3. ~~schedule~~ (skipped — personal calendar only; no foreign slots)
+4. ~~booking — create request from site~~ (done)
+5. ~~admin rooms — backend CRUD + admin UI create/delete~~ (done)
+
+Auth + Telegram bot are done; only fix regressions if they break.
