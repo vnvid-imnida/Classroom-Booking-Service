@@ -1,7 +1,7 @@
 # Uses PEP 8
 # Tools: black, flake8, mypy
 
-"""SMTP email delivery for auth flows."""
+"""SMTP email delivery (auth codes + booking notifications)."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def _looks_like_placeholder(value: str) -> bool:
 
 
 class EmailSendError(RuntimeError):
-    """Raised when a verification email cannot be delivered."""
+    """Raised when an email cannot be delivered."""
 
 
 def _smtp_send(host: str, port: int, user: str, password: str, message: EmailMessage) -> None:
@@ -51,17 +51,16 @@ def _smtp_send(host: str, port: int, user: str, password: str, message: EmailMes
         smtp.send_message(message)
 
 
-def send_verification_email(*, to_email: str, code: str, full_name: str) -> None:
-    """Send a 6-digit verification code via SMTP (or log it when email is disabled)."""
-    subject = "Код подтверждения — SPbPU Booking"
-    body = (
-        f"Здравствуйте, {full_name}!\n\n"
-        f"Ваш код подтверждения email: {code}\n\n"
-        "Код действует 15 минут. Если вы не регистрировались — проигнорируйте письмо."
-    )
+def send_email(*, to_email: str, subject: str, body: str) -> None:
+    """Send a plain-text email via SMTP (or log it when email is disabled)."""
+    if not to_email or not str(to_email).strip():
+        logger.info("Skip email %r — empty recipient", subject)
+        return
+
+    to_email = str(to_email).strip()
 
     if not _email_enabled():
-        msg = f"EMAIL_ENABLED=false — verification code for {to_email}: {code}"
+        msg = f"EMAIL_ENABLED=false — to={to_email} subject={subject!r}\n{body}"
         print(msg, flush=True)
         logger.info(msg)
         return
@@ -89,7 +88,6 @@ def send_verification_email(*, to_email: str, code: str, full_name: str) -> None
     message.set_content(body)
 
     errors: list[str] = []
-    # Prefer configured port, then fall back to the other Gmail-compatible option
     ports_to_try = [port]
     for alt in (465, 587):
         if alt not in ports_to_try:
@@ -98,7 +96,7 @@ def send_verification_email(*, to_email: str, code: str, full_name: str) -> None
     for try_port in ports_to_try:
         try:
             _smtp_send(host, try_port, user, password, message)
-            msg = f"Verification email sent to {to_email} via {host}:{try_port}"
+            msg = f"Email sent to {to_email} via {host}:{try_port} ({subject})"
             print(msg, flush=True)
             logger.info(msg)
             return
@@ -113,3 +111,14 @@ def send_verification_email(*, to_email: str, code: str, full_name: str) -> None
         + ". Проверьте пароль приложения и сеть (антивирус/VPN). "
         "Если используете Gmail и ошибка TLS — попробуйте Яндекс (smtp.yandex.ru:465)."
     )
+
+
+def send_verification_email(*, to_email: str, code: str, full_name: str) -> None:
+    """Send a 6-digit verification code via SMTP (or log it when email is disabled)."""
+    subject = "Код подтверждения — SPbPU Booking"
+    body = (
+        f"Здравствуйте, {full_name}!\n\n"
+        f"Ваш код подтверждения email: {code}\n\n"
+        "Код действует 15 минут. Если вы не регистрировались — проигнорируйте письмо."
+    )
+    send_email(to_email=to_email, subject=subject, body=body)

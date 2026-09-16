@@ -142,6 +142,7 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      BOOKING_REMINDER_POLL_SECONDS: ${BOOKING_REMINDER_POLL_SECONDS:-60}
     networks:
       - spbpu-booking-network
     restart: unless-stopped

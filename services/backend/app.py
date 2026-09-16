@@ -54,8 +54,24 @@ from captcha_utils import captcha_enabled, verify_turnstile_token
 from db import execute, fetch_all, fetch_one, get_conn
 from email_utils import EmailSendError, send_verification_email
 from email_verification import issue_verification_code, verify_stored_code
+from booking_notify import (
+    notify_async,
+    send_booking_cancelled_email,
+    send_request_status_email,
+    start_reminder_scheduler,
+    stop_reminder_scheduler,
+)
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="spbpu-booking-backend", version="1.0.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    start_reminder_scheduler()
+    yield
+    stop_reminder_scheduler()
+
+
+app = FastAPI(title="spbpu-booking-backend", version="1.0.0", lifespan=_lifespan)
 SERVICE_NAME = os.getenv("SERVICE_NAME", "backend")
 logger = logging.getLogger(__name__)
 
@@ -1306,7 +1322,7 @@ def submit_request(request_id: str, user: dict = Depends(get_current_user)):
             """,
             (request_id,),
         )
-        return fetch_one(
+        row = fetch_one(
             conn,
             """
             SELECT id::text, status, submitted_at, room_id, starts_at, ends_at, title
@@ -1314,6 +1330,8 @@ def submit_request(request_id: str, user: dict = Depends(get_current_user)):
             """,
             (request_id,),
         )
+    notify_async(send_request_status_email, request_id, status="PENDING")
+    return row
 
 
 @app.post("/api/v1/booking-requests/{request_id}/cancel")
@@ -1349,7 +1367,8 @@ def cancel_request(request_id: str, user: dict = Depends(get_current_user)):
             """,
             (request_id,),
         )
-        return {"id": request_id, "status": "CANCELLED"}
+    notify_async(send_request_status_email, request_id, status="CANCELLED")
+    return {"id": request_id, "status": "CANCELLED"}
 
 
 @app.get("/api/v1/booking-requests/me")
@@ -1452,7 +1471,8 @@ def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)):
             """,
             (user["id"], booking_id),
         )
-        return {"id": booking_id, "status": "CANCELLED"}
+    notify_async(send_booking_cancelled_email, booking_id)
+    return {"id": booking_id, "status": "CANCELLED"}
 
 
 def _require_moderator(user: dict) -> None:
@@ -1558,7 +1578,8 @@ def approve_request(request_id: str, user: dict = Depends(get_current_user)):
             """,
             (user["id"], request_id),
         )
-        return {"request_id": request_id, "booking": booking}
+    notify_async(send_request_status_email, request_id, status="APPROVED")
+    return {"request_id": request_id, "booking": booking}
 
 
 @app.post("/api/v1/moderation/requests/{request_id}/reject")
@@ -1590,4 +1611,5 @@ def reject_request(request_id: str, body: RejectBody, user: dict = Depends(get_c
             """,
             (user["id"], body.comment, request_id),
         )
-        return {"request_id": request_id, "status": "REJECTED"}
+    notify_async(send_request_status_email, request_id, status="REJECTED")
+    return {"request_id": request_id, "status": "REJECTED"}
