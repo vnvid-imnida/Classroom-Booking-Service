@@ -74,14 +74,15 @@ type BackendBookingRow = {
 
 function mapBookingStatus(status: string): Booking['status'] {
   const s = status.toUpperCase();
-  if (s === 'ACTIVE' || s === 'APPROVED') return 'approved';
-  if (s === 'PENDING' || s === 'DRAFT') return 'pending';
+  if (s === 'DRAFT') return 'draft';
+  if (s === 'ACTIVE' || s === 'APPROVED' || s === 'COMPLETED') return 'approved';
+  if (s === 'PENDING') return 'pending';
   if (s === 'REJECTED') return 'rejected';
-  if (s === 'CANCELLED' || s === 'CANCELED') return 'cancelled';
+  if (s === 'CANCELLED' || s === 'CANCELED' || s === 'RESCHEDULED') return 'cancelled';
   return 'pending';
 }
 
-function mapBackendBooking(row: BackendBookingRow): Booking {
+function mapBackendBooking(row: BackendBookingRow, kind: Booking['kind']): Booking {
   const roomLabel =
     row.building_code && row.room_number
       ? `${row.building_code}-${row.room_number}`
@@ -96,6 +97,7 @@ function mapBackendBooking(row: BackendBookingRow): Booking {
     start: row.starts_at,
     end: row.ends_at,
     status: mapBookingStatus(row.status),
+    kind,
   };
 }
 
@@ -245,32 +247,39 @@ export const bookingsApi = {
     userId?: string;
     roomId?: string;
     admin?: boolean;
+    scope?: 'active' | 'archive';
   }) => {
     if (params?.admin) {
       const res = await apiClient.get<BackendBookingRow[]>('/api/v1/moderation/requests', {
         params: { scope: 'all' },
       });
-      return asBookingRows(res.data).map(mapBackendBooking);
+      return asBookingRows(res.data).map((row) => mapBackendBooking(row, 'request'));
     }
 
+    const scope = params?.scope ?? 'active';
     const [bookingsRes, requestsRes] = await Promise.all([
       apiClient.get<BackendBookingRow[]>('/api/v1/bookings/me', {
-        params: { scope: 'active' },
+        params: { scope },
       }),
       apiClient.get<BackendBookingRow[]>('/api/v1/booking-requests/me', {
-        params: { scope: 'active' },
+        params: { scope },
       }),
     ]);
 
     return [
-      ...asBookingRows(bookingsRes.data).map(mapBackendBooking),
-      ...asBookingRows(requestsRes.data).map(mapBackendBooking),
+      ...asBookingRows(bookingsRes.data).map((row) => mapBackendBooking(row, 'booking')),
+      ...asBookingRows(requestsRes.data).map((row) => mapBackendBooking(row, 'request')),
     ];
   },
-  create: (payload: Omit<Booking, 'id' | 'status'>) =>
+  create: (payload: Omit<Booking, 'id' | 'status' | 'kind'>) =>
     apiClient.post<Booking>('/api/v1/booking-requests', payload).then((r) => r.data),
-  cancel: (id: string) =>
-    apiClient.post<void>(`/api/v1/bookings/${id}/cancel`).then(() => undefined),
+  cancel: (item: Pick<Booking, 'id' | 'kind'>) => {
+    const path =
+      item.kind === 'request'
+        ? `/api/v1/booking-requests/${item.id}/cancel`
+        : `/api/v1/bookings/${item.id}/cancel`;
+    return apiClient.post<void>(path).then(() => undefined);
+  },
   approve: (id: string) =>
     apiClient
       .post<void>(`/api/v1/moderation/requests/${id}/approve`)

@@ -21,7 +21,9 @@ export interface Room {
   hasComputers?: boolean;
 }
 
-export type BookingStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type BookingStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'draft';
+
+export type BookingKind = 'booking' | 'request';
 
 export interface Booking {
   id: string;
@@ -33,6 +35,8 @@ export interface Booking {
   start: string; // ISO datetime
   end: string;   // ISO datetime
   status: BookingStatus;
+  /** Confirmed booking vs booking request (moderation pipeline). */
+  kind: BookingKind;
 }
 
 export interface LoginPayload {
@@ -79,13 +83,15 @@ export type RoomCreatePayload = Omit<Room, 'id'>;
 
 // Локализация
 export const STATUS_LABELS: Record<BookingStatus, string> = {
+  draft: 'Черновик',
   approved: 'Подтверждено',
-  pending: 'Ожидает',
+  pending: 'На модерации',
   rejected: 'Отклонено',
   cancelled: 'Отменено',
 };
 
 export const STATUS_COLORS: Record<BookingStatus, string> = {
+  draft: '#757575',
   approved: '#2E7D32',
   pending: '#ED6C02',
   rejected: '#C62828',
