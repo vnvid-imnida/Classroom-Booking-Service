@@ -7,11 +7,16 @@ import {
 import { Link as RouterLink } from 'react-router-dom';
 import { bookingsApi, purposesApi, roomsApi } from '../api/endpoints';
 import type { Room } from '../types';
-import { freeRuzSlots, moscowDateTimeToUtcIso, RUZ_TIME_SLOTS } from '../utils/dateTime';
+import { freeRuzSlots, isMoscowSunday, moscowDateTimeToUtcIso, RUZ_TIME_SLOTS } from '../utils/dateTime';
 import { getErrorDetail } from '../utils/apiError';
+
+const SUNDAY_BOOKING_HINT = 'В воскресенье бронирование недоступно (выходной).';
 
 function bookingErrorRu(detail: string | undefined): string {
   if (!detail) return 'Не удалось отправить заявку.';
+  if (detail.toLowerCase().includes('sunday')) {
+    return SUNDAY_BOOKING_HINT;
+  }
   if (detail.includes('not available')) {
     return 'Аудитория уже занята в выбранный интервал. Выберите другое время.';
   }
@@ -72,13 +77,15 @@ export default function BookingRequestDialog({
   const occupancyQuery = useQuery({
     queryKey: ['room-occupancy', room?.id, date],
     queryFn: () => roomsApi.occupancy(room!.id, date),
-    enabled: open && Boolean(room && date),
+    enabled: open && Boolean(room && date) && !isMoscowSunday(date),
   });
 
+  const sunday = Boolean(date && isMoscowSunday(date));
+
   const freeSlots = useMemo(() => {
-    if (!date || !occupancyQuery.data) return [];
+    if (!date || sunday || !occupancyQuery.data) return [];
     return freeRuzSlots(date, occupancyQuery.data);
-  }, [date, occupancyQuery.data]);
+  }, [date, sunday, occupancyQuery.data]);
 
   // Drop prefilled slot if it becomes occupied after occupancy loads.
   useEffect(() => {
@@ -91,6 +98,7 @@ export default function BookingRequestDialog({
     mutationFn: async () => {
       if (!room) throw new Error('Аудитория не выбрана');
       if (!date) throw new Error('Укажите дату');
+      if (isMoscowSunday(date)) throw new Error(SUNDAY_BOOKING_HINT);
       const [start, end] = slotKey.split('|');
       if (!start || !end) throw new Error('Выберите время (пару)');
       if (purposeId === '') throw new Error('Выберите цель мероприятия');
@@ -129,7 +137,7 @@ export default function BookingRequestDialog({
 
   const busy = createMutation.isPending;
   const canSubmit =
-    Boolean(room && date && slotKey && purposeId !== '' && title.trim()) && !busy;
+    Boolean(room && date && !sunday && slotKey && purposeId !== '' && title.trim()) && !busy;
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="sm">
@@ -171,7 +179,11 @@ export default function BookingRequestDialog({
               fullWidth
             />
 
-            <FormControl fullWidth required disabled={!date || occupancyQuery.isLoading}>
+            {sunday && (
+              <Alert severity="warning">{SUNDAY_BOOKING_HINT}</Alert>
+            )}
+
+            <FormControl fullWidth required disabled={!date || sunday || occupancyQuery.isLoading}>
               <InputLabel id="book-slot-label">Время (пара)</InputLabel>
               <Select
                 labelId="book-slot-label"
@@ -184,6 +196,8 @@ export default function BookingRequestDialog({
                 <MenuItem value="none" disabled>
                   {!date
                     ? 'Сначала выберите дату'
+                    : sunday
+                      ? 'В воскресенье слотов нет'
                     : occupancyQuery.isLoading
                       ? 'Загрузка свободных слотов…'
                       : freeSlots.length === 0
@@ -198,7 +212,7 @@ export default function BookingRequestDialog({
               </Select>
             </FormControl>
 
-            {date && occupancyQuery.isError && (
+            {date && !sunday && occupancyQuery.isError && (
               <Alert severity="warning">Не удалось загрузить занятость аудитории.</Alert>
             )}
 

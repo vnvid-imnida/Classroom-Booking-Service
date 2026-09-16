@@ -37,6 +37,17 @@ export function moscowDateTimeToUtcIso(date: string, hm: string): string {
   return new Date(asUtcMs).toISOString();
 }
 
+/**
+ * True when ``YYYY-MM-DD`` is Sunday (SPbPU / bot: no booking on Sundays).
+ * Uses the calendar date as-is (Moscow wall date from the date picker).
+ */
+export function isMoscowSunday(dateYmd: string): boolean {
+  const [y, m, d] = dateYmd.split('-').map(Number);
+  if (!y || !m || !d) return false;
+  // Date.UTC noon avoids DST edge cases; weekday is calendar-stable for Y-M-D.
+  return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay() === 0;
+}
+
 function rangesOverlap(start1: number, end1: number, start2: number, end2: number): boolean {
   return start1 < end2 && end1 > start2;
 }
@@ -46,6 +57,7 @@ export function freeRuzSlots(
   date: string,
   occupancy: Array<{ starts_at: string; ends_at: string }>,
 ): typeof RUZ_TIME_SLOTS[number][] {
+  if (isMoscowSunday(date)) return [];
   return RUZ_TIME_SLOTS.filter((slot) => {
     const start = new Date(moscowDateTimeToUtcIso(date, slot.start)).getTime();
     const end = new Date(moscowDateTimeToUtcIso(date, slot.end)).getTime();

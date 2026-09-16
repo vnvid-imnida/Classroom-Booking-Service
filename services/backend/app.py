@@ -1100,6 +1100,9 @@ def available_rooms(
     end_dt = _parse_dt(ends_at)
     if end_dt <= start_dt:
         raise HTTPException(400, "ends_at must be after starts_at")
+    # Sundays are a day off (same rule as Telegram booking dates).
+    if start_dt.astimezone(_MOSCOW_TZ).weekday() == 6:
+        return []
 
     clauses = ["r.is_active = true"]
     params: list = []
@@ -1225,6 +1228,8 @@ def create_request(body: BookingRequestCreate, user: dict = Depends(get_current_
     end_dt = _parse_dt(body.ends_at)
     if end_dt <= start_dt:
         raise HTTPException(400, "ends_at must be after starts_at")
+    if start_dt.astimezone(_MOSCOW_TZ).weekday() == 6:
+        raise HTTPException(400, "Booking on Sunday is not allowed")
     if body.action == "RESCHEDULE" and not body.target_booking_id:
         raise HTTPException(400, "target_booking_id required for RESCHEDULE")
 
